@@ -1,0 +1,216 @@
+/*
+ * Copyright 2026 René Widera
+ * SPDX-License-Identifier: ISC
+ */
+
+#pragma once
+
+#include "alpakaNN/inference/kv_cache.hpp"
+#include "alpakaNN/inference/transformer_block.hpp"
+#include "alpakaNN/matrix/gemm.hpp"
+#include "alpakaNN/nn/embedding.hpp"
+#include "alpakaNN/nn/rms_norm.hpp"
+
+#include <alpaka/alpaka.hpp>
+
+#include <cmath>
+#include <cstdint>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace alpakaNN::model
+{
+    struct ModelConfig
+    {
+        uint32_t hiddenSize{};
+        uint32_t intermediateSize{};
+        uint32_t numLayers{};
+        uint32_t numHeads{};
+        uint32_t numKeyValueHeads{};
+        uint32_t vocabSize{};
+        uint32_t bosTokenId{};
+        uint32_t eosTokenId{};
+        uint32_t maxPositionEmbeddings{};
+        float rmsNormEpsilon{};
+        float ropeTheta{};
+    };
+
+    template<typename T_Type, typename TVectorBuffer, typename TMatrixBuffer>
+    struct DecoderModel
+    {
+        using value_type = T_Type;
+
+        ModelConfig config;
+        TMatrixBuffer embedding;
+        std::vector<alpakaNN::inference::TransformerBlockWeights<T_Type, TVectorBuffer, TMatrixBuffer>> layers;
+        TVectorBuffer finalNorm;
+        TMatrixBuffer lmHead;
+    };
+
+    inline ModelConfig readConfig(std::istream& input)
+    {
+        char magic[4];
+        input.read(magic, 4);
+        if(std::string_view(magic, 4) != "ANN1")
+            throw std::runtime_error{"Invalid model file magic."};
+
+        ModelConfig cfg{};
+        input.read(reinterpret_cast<char*>(&cfg.hiddenSize), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.intermediateSize), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.numLayers), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.numHeads), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.numKeyValueHeads), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.vocabSize), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.bosTokenId), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.eosTokenId), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.maxPositionEmbeddings), sizeof(uint32_t));
+        input.read(reinterpret_cast<char*>(&cfg.rmsNormEpsilon), sizeof(float));
+        input.read(reinterpret_cast<char*>(&cfg.ropeTheta), sizeof(float));
+        return cfg;
+    }
+
+    template<typename T_Type, typename T_Device>
+    auto loadTinyLlama(T_Device const& device, std::string const& path)
+    {
+        using VectorBuffer = decltype(alpaka::onHost::alloc<T_Type>(device, uint32_t{1}));
+        using MatrixBuffer = decltype(alpaka::onHost::alloc<T_Type>(device, alpaka::Vec{1u, 1u}));
+
+        std::ifstream input(path, std::ios::binary);
+        if(!input)
+            throw std::runtime_error{"Failed to open model file: " + path};
+
+        auto cfg = readConfig(input);
+        auto deviceCopy = device;
+        auto queue = deviceCopy.makeQueue();
+
+        auto load1D = [&](uint32_t size)
+        {
+            auto host = alpaka::onHost::allocHost<T_Type>(size);
+            input.read(reinterpret_cast<char*>(host.data()), static_cast<std::streamsize>(size * sizeof(T_Type)));
+            if(!input)
+                throw std::runtime_error{"Unexpected end of file while reading 1D tensor."};
+            auto dev = alpaka::onHost::allocLike(device, host);
+            alpaka::onHost::memcpy(queue, dev, host);
+            alpaka::onHost::wait(queue);
+            return dev;
+        };
+
+        auto load2D = [&](uint32_t rows, uint32_t cols)
+        {
+            auto host = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{rows, cols});
+            input.read(reinterpret_cast<char*>(host.data()), static_cast<std::streamsize>(rows * cols * sizeof(T_Type)));
+            if(!input)
+                throw std::runtime_error{"Unexpected end of file while reading 2D tensor."};
+            auto dev = alpaka::onHost::allocLike(device, host);
+            alpaka::onHost::memcpy(queue, dev, host);
+            alpaka::onHost::wait(queue);
+            return dev;
+        };
+
+        auto embedding = load2D(cfg.vocabSize, cfg.hiddenSize);
+        std::vector<alpakaNN::inference::TransformerBlockWeights<T_Type, VectorBuffer, MatrixBuffer>> layers;
+        layers.reserve(cfg.numLayers);
+        for(uint32_t layer = 0u; layer < cfg.numLayers; ++layer)
+        {
+            layers.push_back(alpakaNN::inference::TransformerBlockWeights<T_Type, VectorBuffer, MatrixBuffer>{
+                load1D(cfg.hiddenSize),
+                load1D(cfg.hiddenSize),
+                load2D(cfg.hiddenSize, cfg.hiddenSize),
+                load2D(cfg.hiddenSize, cfg.hiddenSize),
+                load2D(cfg.hiddenSize, cfg.hiddenSize),
+                load2D(cfg.hiddenSize, cfg.hiddenSize),
+                load2D(cfg.hiddenSize, cfg.intermediateSize),
+                load2D(cfg.hiddenSize, cfg.intermediateSize),
+                load2D(cfg.intermediateSize, cfg.hiddenSize),
+                cfg.numHeads,
+                cfg.hiddenSize / cfg.numHeads,
+                cfg.rmsNormEpsilon});
+        }
+        auto finalNorm = load1D(cfg.hiddenSize);
+        auto lmHead = load2D(cfg.hiddenSize, cfg.vocabSize);
+        alpaka::onHost::wait(queue);
+
+        return DecoderModel<T_Type, VectorBuffer, MatrixBuffer>{cfg, embedding, std::move(layers), finalNorm, lmHead};
+    }
+
+    template<typename T_Type, typename T_Device>
+    auto makeRopeTables(T_Device const& device, uint32_t positions, uint32_t pairCount, T_Type theta)
+    {
+        auto hostCos = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{positions, pairCount});
+        auto hostSin = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{positions, pairCount});
+        for(uint32_t pos = 0u; pos < positions; ++pos)
+        {
+            for(uint32_t pair = 0u; pair < pairCount; ++pair)
+            {
+                auto const exponent = static_cast<T_Type>(2u * pair) / static_cast<T_Type>(pairCount * 2u);
+                auto const angle = static_cast<T_Type>(pos) / std::pow(theta, exponent);
+                hostCos[alpaka::Vec{pos, pair}] = std::cos(angle);
+                hostSin[alpaka::Vec{pos, pair}] = std::sin(angle);
+            }
+        }
+
+        auto deviceCopy = device;
+        auto queue = deviceCopy.makeQueue();
+        auto devCos = alpaka::onHost::allocLike(device, hostCos);
+        auto devSin = alpaka::onHost::allocLike(device, hostSin);
+        alpaka::onHost::memcpy(queue, devCos, hostCos);
+        alpaka::onHost::memcpy(queue, devSin, hostSin);
+        alpaka::onHost::wait(queue);
+        return std::pair{devCos, devSin};
+    }
+
+    template<typename T_Model>
+    auto prefill(auto& queue, auto exec, T_Model const& model, std::vector<uint32_t> const& tokenIds)
+    {
+        using T_Type = typename T_Model::value_type;
+
+        auto hostTokens = alpaka::onHost::allocHost<uint32_t>(static_cast<uint32_t>(tokenIds.size()));
+        for(uint32_t i = 0u; i < tokenIds.size(); ++i)
+            hostTokens[alpaka::Vec{i}] = tokenIds[i];
+        auto devTokens = alpaka::onHost::allocLike(queue.getDevice(), hostTokens);
+        alpaka::onHost::memcpy(queue, devTokens, hostTokens);
+
+        auto hidden = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.hiddenSize});
+        nn::embeddingLookup<T_Type>(queue, exec, devTokens, model.embedding, hidden);
+
+        auto ropeTables = makeRopeTables<T_Type>(
+            queue.getDevice(),
+            static_cast<uint32_t>(tokenIds.size()),
+            model.config.hiddenSize / model.config.numHeads / 2u,
+            static_cast<T_Type>(model.config.ropeTheta));
+        auto cache = alpakaNN::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numHeads,
+            static_cast<uint32_t>(tokenIds.size()),
+            model.config.hiddenSize / model.config.numHeads);
+
+        for(uint32_t layer = 0u; layer < model.config.numLayers; ++layer)
+        {
+            auto next = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
+            alpakaNN::inference::transformerBlock<T_Type>(
+                queue,
+                exec,
+                hidden,
+                model.layers[layer],
+                cache,
+                layer,
+                ropeTables.first,
+                ropeTables.second,
+                next);
+            hidden = next;
+        }
+
+        auto norm = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
+        nn::rmsNorm<T_Type>(queue, exec, hidden, model.finalNorm, norm, static_cast<T_Type>(model.config.rmsNormEpsilon));
+        auto logits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.vocabSize});
+        alpakaNN::gemm<T_Type>(queue, exec, norm, model.lmHead, logits);
+        alpaka::onHost::wait(queue);
+        return logits;
+    }
+} // namespace alpakaNN::model
