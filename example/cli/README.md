@@ -22,6 +22,8 @@ Start interactive chat mode explicitly:
 ```bash
 ./build/example/cli/ChatCli -i --model /path/to/model
 ./build/example/cli/ChatCli --interactive --model /path/to/model
+./build/example/cli/ChatCli -i --model /path/to/model --system-prompt "You are a concise assistant."
+./build/example/cli/ChatCli -i --model /path/to/model --max-new-tokens 64
 ```
 
 List known model presets:
@@ -63,5 +65,5 @@ TinyLlama chat command:
 
 ```bash
 python3 tools/download_tiny_llama.py tinyllama-1.1b-chat models/tinyllama-1.1b-chat
-./build/example/cli/ChatCli -i --model models/tinyllama-1.1b-chat
+./build/example/cli/ChatCli -i --model models/tinyllama-1.1b-chat --system-prompt "You are a concise assistant."
 ```

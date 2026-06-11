@@ -30,6 +30,8 @@ namespace
     struct CliOptions
     {
         std::string modelArg = "tiny_llama";
+        std::string systemPrompt;
+        size_t maxNewTokens = 64u;
         bool interactive = false;
         bool showList = false;
         bool showHelp = false;
@@ -49,6 +51,13 @@ namespace
     {
         std::string role;
         std::string content;
+    };
+
+    enum class ChatTemplateSupport
+    {
+        none,
+        tinyLlama,
+        unsupported
     };
 
     std::string shellQuote(std::string_view value)
@@ -261,17 +270,21 @@ namespace
             return runTokenizerHelper(modelDir, "decode", tokenIdsToJson(tokenIds));
         }
 
-        bool hasChatTemplate() const
+        ChatTemplateSupport chatTemplateSupport() const
         {
             auto const configPath = modelDir / "tokenizer_config.json";
             if(!fs::exists(configPath))
-                return false;
+                return ChatTemplateSupport::none;
             auto const text = readTextFile(configPath);
-            return text.find("message['role'] == 'user'") != std::string::npos
+            auto const hasTemplate = text.find("\"chat_template\"") != std::string::npos;
+            if(!hasTemplate)
+                return ChatTemplateSupport::none;
+            auto const isTinyLlamaTemplate = text.find("message['role'] == 'user'") != std::string::npos
                 && text.find("message['role'] == 'assistant'") != std::string::npos
                 && text.find("loop.last and add_generation_prompt") != std::string::npos
                 && text.find("<|user|>") != std::string::npos
                 && text.find("<|assistant|>") != std::string::npos;
+            return isTinyLlamaTemplate ? ChatTemplateSupport::tinyLlama : ChatTemplateSupport::unsupported;
         }
 
         fs::path modelDir;
@@ -413,6 +426,21 @@ namespace
             {
                 options.interactive = true;
             }
+            else if(arg == "--system-prompt")
+            {
+                if(i + 1 >= argc)
+                    throw std::runtime_error("--system-prompt requires a value");
+                options.systemPrompt = argv[++i];
+            }
+            else if(arg == "--max-new-tokens")
+            {
+                if(i + 1 >= argc)
+                    throw std::runtime_error("--max-new-tokens requires a value");
+                auto const value = std::stoul(argv[++i]);
+                if(value == 0u)
+                    throw std::runtime_error("--max-new-tokens must be greater than zero");
+                options.maxNewTokens = value;
+            }
             else if(arg == "-l" || arg == "--list")
             {
                 options.showList = true;
@@ -441,6 +469,10 @@ namespace
                   << "Options:\n"
                   << "  -i, --interactive     Start interactive chat mode\n"
                   << "  -m, --model MODEL     Model name, model directory, or .bin path\n"
+                  << "      --system-prompt TEXT\n"
+                  << "                        Add an initial system message in interactive mode\n"
+                  << "      --max-new-tokens N\n"
+                  << "                        Maximum tokens to generate per assistant turn (default: 64)\n"
                   << "  -l, --list            List downloaded models\n"
                   << "  -h, --help            Show this help message\n";
     }
@@ -472,13 +504,30 @@ namespace
     }
 
     template<typename T_Model>
-    void runInteractiveChat(auto& queue, auto exec, T_Model const& model, PythonTokenizer const& tokenizer)
+    void runInteractiveChat(
+        auto& queue,
+        auto exec,
+        T_Model const& model,
+        PythonTokenizer const& tokenizer,
+        CliOptions const& options)
     {
+        auto const templateSupport = tokenizer.chatTemplateSupport();
+        if(templateSupport == ChatTemplateSupport::unsupported)
+        {
+            throw std::runtime_error(
+                "Model exposes an unsupported chat_template; only the TinyLlama minimal role-marker template is supported");
+        }
+
         std::cout << "Interactive chat mode. Type 'quit' or 'exit' to end." << std::endl;
         std::cout << "Note: useful English output requires a trained supported Llama-family model." << std::endl;
 
         std::vector<ChatMessage> messages;
         std::string transcript;
+        if(!options.systemPrompt.empty())
+        {
+            messages.push_back(ChatMessage{"system", options.systemPrompt});
+            transcript = "System: " + options.systemPrompt;
+        }
         std::string line;
         while(true)
         {
@@ -491,7 +540,7 @@ namespace
                 continue;
 
             std::vector<uint32_t> promptTokens;
-            if(tokenizer.hasChatTemplate())
+            if(templateSupport == ChatTemplateSupport::tinyLlama)
             {
                 messages.push_back(ChatMessage{"user", line});
                 promptTokens = tokenizer.encodeChatPrompt(messages);
@@ -503,11 +552,13 @@ namespace
                 transcript += "User: " + line + "\nAssistant:";
                 promptTokens = tokenizer.encodePrompt(transcript);
             }
-            auto generated = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, 64u);
+            auto generated = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, options.maxNewTokens);
             std::vector<uint32_t> newTokens(generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()), generated.end());
             auto response = trim(tokenizer.decodeTokens(newTokens));
-            std::cout << response << std::endl;
-            if(tokenizer.hasChatTemplate())
+            if(response.empty())
+                throw std::runtime_error("Assistant reply was empty after trimming");
+            std::cout << "Assistant: " << response << std::endl;
+            if(templateSupport == ChatTemplateSupport::tinyLlama)
                 messages.push_back(ChatMessage{"assistant", response});
             else
                 transcript += response;
@@ -555,7 +606,7 @@ int main(int argc, char* argv[])
         PythonTokenizer tokenizer(assets.modelDir);
 
         if(options.interactive)
-            runInteractiveChat(queue, exec, model, tokenizer);
+            runInteractiveChat(queue, exec, model, tokenizer, options);
         else
             runSelfTest(queue, exec, model, tokenizer);
 
