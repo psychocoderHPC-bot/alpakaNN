@@ -6,6 +6,7 @@
 #pragma once
 
 #include "alpakaNN/detail/launch.hpp"
+#include "alpakaNN/matrix/blas.hpp"
 
 #include <alpaka/alpaka.hpp>
 
@@ -16,6 +17,8 @@ namespace alpakaNN
 {
     namespace detail
     {
+        ALPAKA_FN_SYMBOL(GemvFn, alpaka::fn::Fallback::toAlpaka, alpaka::fn::Registration::enforced);
+
         template<typename T_Type>
         struct GemvKernel
         {
@@ -31,6 +34,107 @@ namespace alpakaNN
                 }
             }
         };
+
+        template<alpaka::concepts::DeviceKind T_DeviceKind>
+        constexpr void fnRegister(GemvFn::Spec<alpaka::fn::api::Alpaka, T_DeviceKind>)
+        {
+        }
+
+#if ALPAKANN_OPENBLAS_ENABLED
+        template<alpaka::concepts::DeviceKind T_DeviceKind>
+        constexpr void fnRegister(GemvFn::Spec<alpaka::api::Host, T_DeviceKind>)
+        {
+        }
+#endif
+
+        template<typename T_Type>
+        void gemvAlpaka(auto& queue, auto exec, auto const& W, auto const& x, auto& y)
+        {
+            queue.enqueue(
+                alpakaNN::detail::makeFrameSpec(queue.getDevice(), exec, y.getExtents()),
+                alpaka::KernelBundle{GemvKernel<T_Type>{}, W, x, y});
+        }
+
+        template<alpaka::concepts::DeviceKind T_DeviceKind, typename T_Type>
+        void fnDispatch(
+            GemvFn::Spec<alpaka::fn::api::Alpaka, T_DeviceKind>,
+            auto const&,
+            auto& queue,
+            auto exec,
+            std::type_identity<T_Type>,
+            auto const& W,
+            auto const& x,
+            auto& y)
+        {
+            gemvAlpaka<T_Type>(queue, exec, W, x, y);
+        }
+
+#if ALPAKANN_OPENBLAS_ENABLED
+        template<alpaka::concepts::DeviceKind T_DeviceKind, typename T_Type>
+        void fnDispatch(
+            GemvFn::Spec<alpaka::api::Host, T_DeviceKind>,
+            auto const&,
+            auto& queue,
+            auto exec,
+            std::type_identity<T_Type>,
+            auto const& W,
+            auto const& x,
+            auto& y)
+        {
+            if constexpr(!matrix::detail::OpenBlasScalar<T_Type>)
+            {
+                gemvAlpaka<T_Type>(queue, exec, W, x, y);
+            }
+            else if(
+                !matrix::detail::hasBlasMatrixLayout(W) || !matrix::detail::hasBlasVectorLayout(x)
+                || !matrix::detail::hasBlasVectorLayout(y))
+            {
+                gemvAlpaka<T_Type>(queue, exec, W, x, y);
+            }
+            else
+            {
+                alpaka::onHost::wait(queue);
+
+                auto const m = matrix::detail::toBlasInt(W.getExtents()[0], "gemv M");
+                auto const n = matrix::detail::toBlasInt(W.getExtents()[1], "gemv N");
+                auto const lda = matrix::detail::leadingDimension(W, "gemv lda");
+                auto const incx = matrix::detail::vectorIncrement(x, "gemv incx");
+                auto const incy = matrix::detail::vectorIncrement(y, "gemv incy");
+                if constexpr(std::same_as<T_Type, float>)
+                {
+                    cblas_sgemv(
+                        CblasRowMajor,
+                        CblasNoTrans,
+                        m,
+                        n,
+                        1.0f,
+                        W.data(),
+                        lda,
+                        x.data(),
+                        incx,
+                        0.0f,
+                        y.data(),
+                        incy);
+                }
+                else
+                {
+                    cblas_dgemv(
+                        CblasRowMajor,
+                        CblasNoTrans,
+                        m,
+                        n,
+                        1.0,
+                        W.data(),
+                        lda,
+                        x.data(),
+                        incx,
+                        0.0,
+                        y.data(),
+                        incy);
+                }
+            }
+        }
+#endif
     } // namespace detail
 
     template<typename T_Type = float>
@@ -45,8 +149,6 @@ namespace alpakaNN
         if(wExtent.x() != xExtent[0] || wExtent.y() != yExtent[0])
             throw std::invalid_argument{"gemv shape mismatch."};
 
-        queue.enqueue(
-            alpakaNN::detail::makeFrameSpec(queue.getDevice(), exec, yExtent),
-            alpaka::KernelBundle{detail::GemvKernel<T_Type>{}, W, x, y});
+        detail::GemvFn::call(queue.getDevice(), queue, exec, std::type_identity<T_Type>{}, W, x, y);
     }
 } // namespace alpakaNN

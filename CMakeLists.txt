@@ -15,8 +15,10 @@ project(
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(FetchContent)
 
 option(alpakaNN_BUILD_TESTS "Build alpakaNN unit tests." ${PROJECT_IS_TOP_LEVEL})
+option(alpakaNN_OPENBLAS "Enable OpenBLAS host dispatch for GEMM/GEMV." ON)
 set(alpaka_COMPILE_PEDANTIC ON CACHE BOOL "Compile all code with strict compiler settings." FORCE)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -38,10 +40,32 @@ endif()
 
 add_subdirectory(extern/alpaka3)
 
+if(alpakaNN_OPENBLAS)
+    set(BUILD_WITHOUT_LAPACK ON CACHE BOOL "OpenBLAS: build BLAS only" FORCE)
+    set(BUILD_WITHOUT_LAPACKE ON CACHE BOOL "OpenBLAS: disable LAPACKE" FORCE)
+    set(BUILD_WITHOUT_CBLAS OFF CACHE BOOL "OpenBLAS: keep CBLAS" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "OpenBLAS: disable upstream testing" FORCE)
+    set(BUILD_BENCHMARKS OFF CACHE BOOL "OpenBLAS: disable upstream benchmarks" FORCE)
+    set(BUILD_STATIC_LIBS ON CACHE BOOL "OpenBLAS: build static library" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "OpenBLAS: disable shared library" FORCE)
+    set(NOFORTRAN ON CACHE BOOL "OpenBLAS: skip Fortran support" FORCE)
+    set(DYNAMIC_ARCH OFF CACHE BOOL "OpenBLAS: build only the selected CPU target" FORCE)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+        set(TARGET CORE2 CACHE STRING "OpenBLAS: conservative x86_64 target" FORCE)
+    endif()
+
+    FetchContent_Declare(
+        openblas
+        URL https://github.com/OpenMathLib/OpenBLAS/archive/refs/tags/v0.3.30.tar.gz
+    )
+    FetchContent_MakeAvailable(openblas)
+endif()
+
 add_library(alpakaNN INTERFACE)
 add_library(alpakaNN::alpakaNN ALIAS alpakaNN)
 
 target_compile_features(alpakaNN INTERFACE cxx_std_20)
+target_compile_definitions(alpakaNN INTERFACE ALPAKANN_OPENBLAS_ENABLED=$<BOOL:${alpakaNN_OPENBLAS}>)
 target_include_directories(
     alpakaNN
     INTERFACE
@@ -49,6 +73,14 @@ target_include_directories(
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(alpakaNN INTERFACE $<BUILD_INTERFACE:alpaka::alpaka>)
+if(alpakaNN_OPENBLAS)
+    target_link_libraries(alpakaNN INTERFACE openblas)
+    target_include_directories(
+        alpakaNN
+        INTERFACE
+            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated>
+            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>)
+endif()
 
 add_subdirectory(example/cli)
 
