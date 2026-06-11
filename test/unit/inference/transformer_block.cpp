@@ -28,10 +28,12 @@ TEMPLATE_LIST_TEST_CASE("transformer block runs end to end on tiny dimensions", 
     auto queue = device.makeQueue();
 
     constexpr uint32_t tokens = 2u;
-    constexpr uint32_t hidden = 4u;
-    constexpr uint32_t heads = 2u;
+    constexpr uint32_t hidden = 8u;
+    constexpr uint32_t heads = 4u;
+    constexpr uint32_t kvHeads = 2u;
     constexpr uint32_t headDim = 2u;
-    constexpr uint32_t intermediate = 6u;
+    constexpr uint32_t kvWidth = kvHeads * headDim;
+    constexpr uint32_t intermediate = 10u;
 
     auto makeMatrix = [&](uint32_t rows, uint32_t cols, float scale)
     {
@@ -52,8 +54,8 @@ TEMPLATE_LIST_TEST_CASE("transformer block runs end to end on tiny dimensions", 
         rms2[alpaka::Vec{i}] = 1.0f;
     }
     auto Wq = makeMatrix(hidden, hidden, 0.02f);
-    auto Wk = makeMatrix(hidden, hidden, 0.03f);
-    auto Wv = makeMatrix(hidden, hidden, 0.04f);
+    auto Wk = makeMatrix(hidden, kvWidth, 0.03f);
+    auto Wv = makeMatrix(hidden, kvWidth, 0.04f);
     auto Wo = makeMatrix(hidden, hidden, 0.05f);
     auto Wgate = makeMatrix(hidden, intermediate, 0.02f);
     auto Wup = makeMatrix(hidden, intermediate, 0.03f);
@@ -93,8 +95,8 @@ TEMPLATE_LIST_TEST_CASE("transformer block runs end to end on tiny dimensions", 
     alpaka::onHost::memcpy(queue, devSin, sinTable);
 
     alpakaNN::inference::TransformerBlockWeights<float, decltype(devRms1), decltype(devWq)> weights{
-        devRms1, devRms2, devWq, devWk, devWv, devWo, devWgate, devWup, devWdown, heads, headDim, 1.0e-5f};
-    auto cache = alpakaNN::inference::makeKvCache<float>(device, 1u, 1u, heads, tokens, headDim);
+        devRms1, devRms2, devWq, devWk, devWv, devWo, devWgate, devWup, devWdown, heads, kvHeads, headDim, 1.0e-5f};
+    auto cache = alpakaNN::inference::makeKvCache<float>(device, 1u, 1u, kvHeads, tokens, headDim);
     alpakaNN::inference::transformerBlock<float>(queue, exec, devInput, weights, cache, 0u, devCos, devSin, devOutput);
     alpaka::onHost::memcpy(queue, input, devOutput);
     alpaka::onHost::wait(queue);
@@ -102,4 +104,5 @@ TEMPLATE_LIST_TEST_CASE("transformer block runs end to end on tiny dimensions", 
     for(auto idx : alpaka::IdxRange{input.getExtents()})
         REQUIRE(std::isfinite(input[idx]));
     REQUIRE(cache.length(0u, 0u) == tokens);
+    REQUIRE(cache.getKeys(0u, 0u, tokens).getExtents()[1] == kvHeads);
 }

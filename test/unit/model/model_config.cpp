@@ -17,9 +17,9 @@ namespace fs = std::filesystem;
 
 namespace
 {
-    fs::path writeUnsupportedModelFile()
+    fs::path writeModelFile(uint32_t numHeads, uint32_t numKeyValueHeads)
     {
-        auto const path = fs::temp_directory_path() / "alpakaNN-unsupported-gqa.bin";
+        auto const path = fs::temp_directory_path() / ("alpakaNN-model-config-" + std::to_string(numHeads) + "-" + std::to_string(numKeyValueHeads) + ".bin");
         std::ofstream output(path, std::ios::binary);
         REQUIRE(output);
 
@@ -28,8 +28,8 @@ namespace
             16u,   // hiddenSize
             64u,   // intermediateSize
             2u,    // numLayers
-            4u,    // numHeads
-            2u,    // numKeyValueHeads
+            numHeads,
+            numKeyValueHeads,
             32000u,// vocabSize
             1u,    // bos
             2u,    // eos
@@ -43,7 +43,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("loadTinyLlama rejects grouped-query attention configs", "[model][decoder]")
+TEST_CASE("loadTinyLlama accepts valid grouped-query attention configs", "[model][decoder]")
 {
     auto backends = alpaka::onHost::allBackends(
         alpaka::onHost::enabledDeviceSpecs,
@@ -56,10 +56,31 @@ TEST_CASE("loadTinyLlama rejects grouped-query attention configs", "[model][deco
         return;
     }
 
-    auto const path = writeUnsupportedModelFile();
+    auto const path = writeModelFile(4u, 2u);
     auto device = selector.makeDevice(0);
     REQUIRE_THROWS_WITH(
         alpakaNN::model::loadTinyLlama<float>(device, path.string()),
-        Catch::Matchers::ContainsSubstring("grouped-query attention"));
+        Catch::Matchers::ContainsSubstring("Unexpected end of file"));
+    fs::remove(path);
+}
+
+TEST_CASE("loadTinyLlama rejects invalid grouped-query attention ratios", "[model][decoder]")
+{
+    auto backends = alpaka::onHost::allBackends(
+        alpaka::onHost::enabledDeviceSpecs,
+        alpaka::exec::enabledExecutors);
+    auto cfg = std::get<0>(backends);
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto const path = writeModelFile(4u, 3u);
+    auto device = selector.makeDevice(0);
+    REQUIRE_THROWS_WITH(
+        alpakaNN::model::loadTinyLlama<float>(device, path.string()),
+        Catch::Matchers::ContainsSubstring("divisible by numKeyValueHeads"));
     fs::remove(path);
 }

@@ -15,6 +15,14 @@ Inference support also includes a tiny LLaMA-style decoder path built from alpak
 For your own models later, keep the internal tensor order aligned with the converter:
 
 - embeddings: `[vocab, hidden]`
-- attention and MLP weights: `[in, out]`
+- Q and O attention weights: `[in, out]`
+- grouped K and V attention weights: `[in, num_key_value_heads * head_dim]`
+- MLP weights: `[in, out]`
 - norm weights: `[hidden]`
 - lm head: `[hidden, vocab]`
+
+The Llama-family runtime now supports grouped-query attention when `num_attention_heads % num_key_value_heads == 0`. The documented TinyLlama chat flow is:
+
+`python3 tools/download_tiny_llama.py tinyllama-1.1b-chat models/tinyllama-1.1b-chat`
+
+`./build/example/cli/ChatCli -i --model models/tinyllama-1.1b-chat`

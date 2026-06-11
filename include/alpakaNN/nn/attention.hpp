@@ -16,18 +16,34 @@
 
 namespace alpakaNN::nn
 {
+    enum class AttentionKvLayout
+    {
+        BTHD,
+        BHTD
+    };
+
     namespace detail
     {
         template<typename T_Type>
         struct AttentionScoresKernel
         {
+            uint32_t queriesPerKvGroup;
+            AttentionKvLayout kvLayout;
+
             ALPAKA_FN_ACC void operator()(auto const& acc, auto scores, auto q, auto k) const
             {
                 for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{scores.getExtents()}))
                 {
                     T_Type sum{};
+                    auto const queryHead = static_cast<uint32_t>(idx[1]);
+                    auto const kvHead = queryHead / queriesPerKvGroup;
                     for(uint32_t d = 0u; d < q.getExtents()[3]; ++d)
-                        sum += q[alpaka::Vec{idx[0], idx[2], idx[1], d}] * k[alpaka::Vec{idx[0], idx[3], idx[1], d}];
+                    {
+                        auto const key = kvLayout == AttentionKvLayout::BTHD
+                            ? k[alpaka::Vec{idx[0], idx[3], kvHead, d}]
+                            : k[alpaka::Vec{idx[0], kvHead, idx[3], d}];
+                        sum += q[alpaka::Vec{idx[0], idx[2], queryHead, d}] * key;
+                    }
                     scores[idx] = sum;
                 }
             }
@@ -36,13 +52,23 @@ namespace alpakaNN::nn
         template<typename T_Type>
         struct AttentionApplyKernel
         {
+            uint32_t queriesPerKvGroup;
+            AttentionKvLayout kvLayout;
+
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto probs, auto values) const
             {
                 for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
                 {
                     T_Type sum{};
+                    auto const queryHead = static_cast<uint32_t>(idx[2]);
+                    auto const kvHead = queryHead / queriesPerKvGroup;
                     for(uint32_t key = 0u; key < probs.getExtents()[3]; ++key)
-                        sum += probs[alpaka::Vec{idx[0], idx[2], idx[1], key}] * values[alpaka::Vec{idx[0], key, idx[2], idx[3]}];
+                    {
+                        auto const value = kvLayout == AttentionKvLayout::BTHD
+                            ? values[alpaka::Vec{idx[0], key, kvHead, idx[3]}]
+                            : values[alpaka::Vec{idx[0], kvHead, key, idx[3]}];
+                        sum += probs[alpaka::Vec{idx[0], queryHead, idx[1], key}] * value;
+                    }
                     out[idx] = sum;
                 }
             }
@@ -58,19 +84,41 @@ namespace alpakaNN::nn
     }
 
     template<typename T_Type>
-    void attentionScores(auto& queue, auto exec, auto const& Q, auto const& K, auto& scores)
+    void attentionScores(
+        auto& queue,
+        auto exec,
+        auto const& Q,
+        auto const& K,
+        auto& scores,
+        uint32_t queriesPerKvGroup = 1u,
+        AttentionKvLayout kvLayout = AttentionKvLayout::BTHD)
     {
         queue.enqueue(
             alpakaNN::detail::makeFrameSpec(queue.getDevice(), exec, scores.getExtents()),
-            alpaka::KernelBundle{detail::AttentionScoresKernel<T_Type>{}, scores, Q, K});
+            alpaka::KernelBundle{
+                detail::AttentionScoresKernel<T_Type>{queriesPerKvGroup, kvLayout},
+                scores,
+                Q,
+                K});
     }
 
     template<typename T_Type>
-    void attentionApply(auto& queue, auto exec, auto const& probs, auto const& values, auto& out)
+    void attentionApply(
+        auto& queue,
+        auto exec,
+        auto const& probs,
+        auto const& values,
+        auto& out,
+        uint32_t queriesPerKvGroup = 1u,
+        AttentionKvLayout kvLayout = AttentionKvLayout::BTHD)
     {
         queue.enqueue(
             alpakaNN::detail::makeFrameSpec(queue.getDevice(), exec, out.getExtents()),
-            alpaka::KernelBundle{detail::AttentionApplyKernel<T_Type>{}, out, probs, values});
+            alpaka::KernelBundle{
+                detail::AttentionApplyKernel<T_Type>{queriesPerKvGroup, kvLayout},
+                out,
+                probs,
+                values});
     }
 
     template<typename T_Type>

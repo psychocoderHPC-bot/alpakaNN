@@ -42,6 +42,13 @@ namespace
         fs::path modelFile;
         fs::path configFile;
         fs::path tokenizerFile;
+        fs::path tokenizerConfigFile;
+    };
+
+    struct ChatMessage
+    {
+        std::string role;
+        std::string content;
     };
 
     std::string shellQuote(std::string_view value)
@@ -115,6 +122,27 @@ namespace
             value += ch;
         }
         return {};
+    }
+
+    std::string jsonQuote(std::string_view value)
+    {
+        std::string out = "\"";
+        for(char ch : value)
+        {
+            switch(ch)
+            {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                out += ch;
+                break;
+            }
+        }
+        out += '"';
+        return out;
     }
 
     std::string collectPipeOutput(std::FILE* pipe)
@@ -191,6 +219,25 @@ namespace
         return json;
     }
 
+    std::string chatMessagesToJson(std::vector<ChatMessage> const& messages, bool addGenerationPrompt)
+    {
+        std::string json = "{\"messages\":[";
+        for(size_t idx = 0; idx < messages.size(); ++idx)
+        {
+            if(idx != 0u)
+                json += ",";
+            json += "{\"role\":";
+            json += jsonQuote(messages[idx].role);
+            json += ",\"content\":";
+            json += jsonQuote(messages[idx].content);
+            json += "}";
+        }
+        json += "],\"add_generation_prompt\":";
+        json += addGenerationPrompt ? "true" : "false";
+        json += "}";
+        return json;
+    }
+
     struct PythonTokenizer
     {
         explicit PythonTokenizer(fs::path modelDirectory)
@@ -203,9 +250,28 @@ namespace
             return parseTokenIds(runTokenizerHelper(modelDir, "encode", text, true, false));
         }
 
+        std::vector<uint32_t> encodeChatPrompt(std::vector<ChatMessage> const& messages) const
+        {
+            auto const prompt = runTokenizerHelper(modelDir, "format-chat", chatMessagesToJson(messages, true));
+            return parseTokenIds(runTokenizerHelper(modelDir, "encode", prompt, true, false));
+        }
+
         std::string decodeTokens(std::vector<uint32_t> const& tokenIds) const
         {
             return runTokenizerHelper(modelDir, "decode", tokenIdsToJson(tokenIds));
+        }
+
+        bool hasChatTemplate() const
+        {
+            auto const configPath = modelDir / "tokenizer_config.json";
+            if(!fs::exists(configPath))
+                return false;
+            auto const text = readTextFile(configPath);
+            return text.find("message['role'] == 'user'") != std::string::npos
+                && text.find("message['role'] == 'assistant'") != std::string::npos
+                && text.find("loop.last and add_generation_prompt") != std::string::npos
+                && text.find("<|user|>") != std::string::npos
+                && text.find("<|assistant|>") != std::string::npos;
         }
 
         fs::path modelDir;
@@ -269,6 +335,7 @@ namespace
 
         assets.configFile = assets.modelDir / "config.json";
         assets.tokenizerFile = assets.modelDir / "tokenizer.json";
+        assets.tokenizerConfigFile = assets.modelDir / "tokenizer_config.json";
         if(assets.modelFile.empty())
             throw std::runtime_error("No .bin model file found in: " + assets.modelDir.string());
         if(!fs::exists(assets.configFile))
@@ -408,8 +475,9 @@ namespace
     void runInteractiveChat(auto& queue, auto exec, T_Model const& model, PythonTokenizer const& tokenizer)
     {
         std::cout << "Interactive chat mode. Type 'quit' or 'exit' to end." << std::endl;
-        std::cout << "Note: useful English output requires a trained supported non-GQA Llama-family model." << std::endl;
+        std::cout << "Note: useful English output requires a trained supported Llama-family model." << std::endl;
 
+        std::vector<ChatMessage> messages;
         std::string transcript;
         std::string line;
         while(true)
@@ -422,16 +490,27 @@ namespace
             if(line.empty())
                 continue;
 
-            if(!transcript.empty())
-                transcript += '\n';
-            transcript += "User: " + line + "\nAssistant:";
-
-            auto const promptTokens = tokenizer.encodePrompt(transcript);
+            std::vector<uint32_t> promptTokens;
+            if(tokenizer.hasChatTemplate())
+            {
+                messages.push_back(ChatMessage{"user", line});
+                promptTokens = tokenizer.encodeChatPrompt(messages);
+            }
+            else
+            {
+                if(!transcript.empty())
+                    transcript += '\n';
+                transcript += "User: " + line + "\nAssistant:";
+                promptTokens = tokenizer.encodePrompt(transcript);
+            }
             auto generated = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, 64u);
             std::vector<uint32_t> newTokens(generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()), generated.end());
             auto response = trim(tokenizer.decodeTokens(newTokens));
             std::cout << response << std::endl;
-            transcript += response;
+            if(tokenizer.hasChatTemplate())
+                messages.push_back(ChatMessage{"assistant", response});
+            else
+                transcript += response;
         }
     }
 } // namespace

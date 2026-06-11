@@ -35,16 +35,27 @@ namespace alpakaNN::inference
     template<typename T_Model>
     std::vector<uint32_t> generateGreedy(auto& queue, auto exec, T_Model const& model, std::vector<uint32_t> tokens, uint32_t maxNewTokens)
     {
+        if(maxNewTokens == 0u)
+            return tokens;
+
+        auto cache = alpakaNN::inference::makeKvCache<typename T_Model::value_type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            static_cast<uint32_t>(tokens.size() + maxNewTokens),
+            model.config.hiddenSize / model.config.numHeads);
+        auto logits = alpakaNN::model::prefill(queue, exec, model, tokens, cache);
         for(uint32_t step = 0u; step < maxNewTokens; ++step)
         {
-            auto logits = alpakaNN::model::prefill(queue, exec, model, tokens);
             auto hostLogits = alpaka::onHost::allocHost<typename T_Model::value_type>(logits.getExtents());
             alpaka::onHost::memcpy(queue, hostLogits, logits);
             alpaka::onHost::wait(queue);
-            auto next = argmax<typename T_Model::value_type>(hostLogits, static_cast<uint32_t>(tokens.size() - 1u));
+            auto next = argmax<typename T_Model::value_type>(hostLogits, 0u);
             tokens.push_back(next);
             if(next == model.config.eosTokenId)
                 break;
+            logits = alpakaNN::model::decodeStep(queue, exec, model, cache, next);
         }
         return tokens;
     }

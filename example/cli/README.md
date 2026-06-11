@@ -34,7 +34,7 @@ List known model presets:
 
 - `tiny_llama` is only for CI and smoke testing.
 - `tiny_llama` is untrained and is not expected to produce useful English chat output.
-- Real English output requires a trained, supported, Llama-family non-GQA checkpoint.
+- Real English output requires a trained, supported Llama-family checkpoint.
 
 ## Supported vs Unsupported
 
@@ -42,11 +42,10 @@ Supported checkpoints must match the loader's currently supported architecture:
 
 - Llama-family
 - trained weights
-- non-GQA attention: `num_key_value_heads == num_attention_heads`
+- standard attention or GQA where `num_attention_heads % num_key_value_heads == 0`
 
 Unsupported architectures should be treated as incompatible, not "low quality":
 
-- GQA models: `num_key_value_heads < num_attention_heads`
 - architectures outside the supported Llama-family loader path
 - other unsupported attention or MLP variants
 
@@ -59,3 +58,10 @@ python3 tools/download_tiny_llama.py --help
 ```
 
 Each model directory is expected to contain the tokenizer/config files plus converted binary weights.
+
+TinyLlama chat command:
+
+```bash
+python3 tools/download_tiny_llama.py tinyllama-1.1b-chat models/tinyllama-1.1b-chat
+./build/example/cli/ChatCli -i --model models/tinyllama-1.1b-chat
+```

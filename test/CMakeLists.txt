@@ -7,6 +7,7 @@ cmake_minimum_required(VERSION 3.25)
 
 alpaka_install_catch2()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+option(alpakaNN_ENABLE_TINYLLAMA_LARGE_TESTS "Enable TinyLlama download/convert/chat smoke tests." OFF)
 
 function(alpakaNN_add_test_target target_prefix folder)
     file(GLOB test_folders ${folder})
@@ -82,3 +83,16 @@ add_test(
         $<TARGET_FILE:ChatCli>
         ${TINY_LLAMA_DIR}
 )
+
+if(alpakaNN_ENABLE_TINYLLAMA_LARGE_TESTS)
+    add_test(
+        NAME chat_cli_tinyllama_chat
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py
+            tinyllama-chat
+            $<TARGET_FILE:ChatCli>
+            ${TINY_LLAMA_DIR}
+            ${CMAKE_SOURCE_DIR}
+    )
+endif()

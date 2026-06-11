@@ -19,6 +19,10 @@ class LlamaTokenizer:
 
         tokenizer = json.loads(tokenizer_path.read_text(encoding="utf-8"))
         config = json.loads(config_path.read_text(encoding="utf-8"))
+        tokenizer_config_path = model_dir / "tokenizer_config.json"
+        tokenizer_config = {}
+        if tokenizer_config_path.exists():
+            tokenizer_config = json.loads(tokenizer_config_path.read_text(encoding="utf-8"))
         model = tokenizer.get("model", {})
         if model.get("type") != "BPE":
             raise RuntimeError(f"Unsupported tokenizer model type: {model.get('type')}")
@@ -34,6 +38,11 @@ class LlamaTokenizer:
         self.bos_id = int(config.get("bos_token_id", 1))
         self.eos_id = int(config.get("eos_token_id", 2))
         self.special_ids = {token["id"] for token in tokenizer.get("added_tokens", []) if token.get("special")}
+        self.chat_template = tokenizer_config.get("chat_template")
+        eos_token = tokenizer_config.get("eos_token", "</s>")
+        if isinstance(eos_token, dict):
+            eos_token = eos_token.get("content", "</s>")
+        self.eos_token = str(eos_token)
 
     def encode(self, text: str, add_bos: bool, add_eos: bool) -> List[int]:
         normalized = "▁" + text.replace(" ", "▁")
@@ -125,10 +134,45 @@ class LlamaTokenizer:
                 tokens.append(token_id)
         return tokens
 
+    def format_chat(self, messages: List[Dict[str, str]], add_generation_prompt: bool) -> str:
+        if not self.chat_template:
+            raise RuntimeError("tokenizer_config.json does not contain a chat_template")
+        expected_template = """{% for message in messages %}
+{% if message['role'] == 'user' %}
+{{ '<|user|>
+' + message['content'] + eos_token }}
+{% elif message['role'] == 'system' %}
+{{ '<|system|>
+' + message['content'] + eos_token }}
+{% elif message['role'] == 'assistant' %}
+{{ '<|assistant|>
+'  + message['content'] + eos_token }}
+{% endif %}
+{% if loop.last and add_generation_prompt %}
+{{ '<|assistant|>' }}
+{% endif %}
+{% endfor %}
+"""
+        if self.chat_template.strip() != expected_template.strip():
+            raise RuntimeError("Unsupported chat template; only the TinyLlama minimal role-marker template is supported")
+
+        parts: List[str] = []
+        for message in messages:
+            role = message.get("role")
+            content = message.get("content")
+            if role not in {"system", "user", "assistant"}:
+                raise RuntimeError(f"Unsupported chat role: {role!r}")
+            if not isinstance(content, str):
+                raise RuntimeError("Chat message content must be a string")
+            parts.append(f"<|{role}|>\n{content}{self.eos_token}\n")
+        if add_generation_prompt:
+            parts.append("<|assistant|>")
+        return "".join(parts)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Encode or decode Llama tokenizer.json assets.")
-    parser.add_argument("mode", choices=["encode", "decode"])
+    parser.add_argument("mode", choices=["encode", "decode", "format-chat"])
     parser.add_argument("model_dir")
     parser.add_argument("--bos", action="store_true", help="Prepend bos_token_id during encode.")
     parser.add_argument("--eos", action="store_true", help="Append eos_token_id during encode.")
@@ -142,6 +186,17 @@ def main() -> int:
     if args.mode == "encode":
         token_ids = tokenizer.encode(payload, add_bos=args.bos, add_eos=args.eos)
         sys.stdout.write(json.dumps(token_ids))
+        return 0
+
+    if args.mode == "format-chat":
+        payload_json = json.loads(payload)
+        if not isinstance(payload_json, dict):
+            raise RuntimeError("format-chat expects a JSON object with messages and add_generation_prompt")
+        messages = payload_json.get("messages")
+        add_generation_prompt = bool(payload_json.get("add_generation_prompt", False))
+        if not isinstance(messages, list):
+            raise RuntimeError("format-chat expects a JSON list in messages")
+        sys.stdout.write(tokenizer.format_chat(messages, add_generation_prompt))
         return 0
 
     token_ids = json.loads(payload)

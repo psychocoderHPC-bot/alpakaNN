@@ -171,9 +171,11 @@ def detect_supported_llama(config: dict) -> Tuple[bool, str]:
         return False, f"Unsupported model_type '{config.get('model_type')}', only llama is supported"
     num_heads = int(config["num_attention_heads"])
     num_kv_heads = int(config.get("num_key_value_heads", num_heads))
-    if num_kv_heads != num_heads:
+    if num_heads <= 0 or num_kv_heads <= 0:
+        return False, "Invalid attention config: head counts must be positive"
+    if num_heads % num_kv_heads != 0:
         return False, (
-            f"Unsupported grouped-query attention: num_key_value_heads={num_kv_heads}, "
+            f"Unsupported grouped-query attention ratio: num_key_value_heads={num_kv_heads}, "
             f"num_attention_heads={num_heads}"
         )
     return True, "supported"
@@ -204,6 +206,11 @@ def validate_required_tensors(header: dict, config: dict) -> None:
         raise RuntimeError("Missing required tensors: " + ", ".join(missing[:6]) + ("..." if len(missing) > 6 else ""))
 
 
+def expect_shape(name: str, shape: List[int], expected: List[int]) -> None:
+    if list(shape) != expected:
+        raise RuntimeError(f"{name} shape mismatch: expected {expected}, got {list(shape)}")
+
+
 def write_manifest(
     out_dir: pathlib.Path,
     *,
@@ -232,6 +239,13 @@ def write_manifest(
 def convert_supported_llama(model_name: str, out_dir: pathlib.Path, config: dict) -> pathlib.Path:
     header, data = load_safetensor_bundle(model_name)
     validate_required_tensors(header, config)
+    hidden_size = int(config["hidden_size"])
+    intermediate_size = int(config["intermediate_size"])
+    num_layers = int(config["num_hidden_layers"])
+    num_heads = int(config["num_attention_heads"])
+    num_kv_heads = int(config.get("num_key_value_heads", num_heads))
+    head_dim = hidden_size // num_heads
+    kv_width = num_kv_heads * head_dim
 
     out_path = out_dir / f"{pathlib.Path(model_name).name}.bin"
     with out_path.open("wb") as handle:
@@ -239,11 +253,11 @@ def convert_supported_llama(model_name: str, out_dir: pathlib.Path, config: dict
         handle.write(
             struct.pack(
                 "<9I2f",
-                int(config["hidden_size"]),
-                int(config["intermediate_size"]),
-                int(config["num_hidden_layers"]),
-                int(config["num_attention_heads"]),
-                int(config.get("num_key_value_heads", config["num_attention_heads"])),
+                hidden_size,
+                intermediate_size,
+                num_layers,
+                num_heads,
+                num_kv_heads,
                 int(config["vocab_size"]),
                 int(config.get("bos_token_id", 1)),
                 int(config.get("eos_token_id", 2)),
@@ -253,36 +267,41 @@ def convert_supported_llama(model_name: str, out_dir: pathlib.Path, config: dict
             )
         )
 
-        _, embedding = tensor_f32(header, data, "model.embed_tokens.weight")
+        embedding_shape, embedding = tensor_f32(header, data, "model.embed_tokens.weight")
+        expect_shape("model.embed_tokens.weight", embedding_shape, [int(config["vocab_size"]), hidden_size])
         write_tensor(handle, embedding, "model.embed_tokens.weight")
 
-        for layer in range(int(config["num_hidden_layers"])):
+        for layer in range(num_layers):
             norm_names = [
                 f"model.layers.{layer}.input_layernorm.weight",
                 f"model.layers.{layer}.post_attention_layernorm.weight",
             ]
             for name in norm_names:
-                _, values = tensor_f32(header, data, name)
+                shape, values = tensor_f32(header, data, name)
+                expect_shape(name, shape, [hidden_size])
                 write_tensor(handle, values, name)
 
-            projection_names = [
-                f"model.layers.{layer}.self_attn.q_proj.weight",
-                f"model.layers.{layer}.self_attn.k_proj.weight",
-                f"model.layers.{layer}.self_attn.v_proj.weight",
-                f"model.layers.{layer}.self_attn.o_proj.weight",
-                f"model.layers.{layer}.mlp.gate_proj.weight",
-                f"model.layers.{layer}.mlp.up_proj.weight",
-                f"model.layers.{layer}.mlp.down_proj.weight",
-            ]
-            for name in projection_names:
+            projection_shapes = {
+                f"model.layers.{layer}.self_attn.q_proj.weight": [hidden_size, hidden_size],
+                f"model.layers.{layer}.self_attn.k_proj.weight": [kv_width, hidden_size],
+                f"model.layers.{layer}.self_attn.v_proj.weight": [kv_width, hidden_size],
+                f"model.layers.{layer}.self_attn.o_proj.weight": [hidden_size, hidden_size],
+                f"model.layers.{layer}.mlp.gate_proj.weight": [intermediate_size, hidden_size],
+                f"model.layers.{layer}.mlp.up_proj.weight": [intermediate_size, hidden_size],
+                f"model.layers.{layer}.mlp.down_proj.weight": [hidden_size, intermediate_size],
+            }
+            for name, expected_shape in projection_shapes.items():
                 shape, values = tensor_f32(header, data, name)
+                expect_shape(name, shape, expected_shape)
                 write_tensor(handle, transpose_2d(shape, values), name)
 
-        _, final_norm = tensor_f32(header, data, "model.norm.weight")
+        final_norm_shape, final_norm = tensor_f32(header, data, "model.norm.weight")
+        expect_shape("model.norm.weight", final_norm_shape, [hidden_size])
         write_tensor(handle, final_norm, "model.norm.weight")
 
         lm_head_name = "lm_head.weight" if "lm_head.weight" in header else "model.embed_tokens.weight"
         lm_shape, lm_head = tensor_f32(header, data, lm_head_name)
+        expect_shape(lm_head_name, lm_shape, [int(config["vocab_size"]), hidden_size])
         write_tensor(handle, transpose_2d(lm_shape, lm_head), lm_head_name)
 
     return out_path

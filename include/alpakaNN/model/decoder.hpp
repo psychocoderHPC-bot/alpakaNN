@@ -77,14 +77,12 @@ namespace alpakaNN::model
     {
         if(cfg.numHeads == 0u)
             throw std::runtime_error{"Model config is invalid: numHeads must be non-zero."};
+        if(cfg.numKeyValueHeads == 0u)
+            throw std::runtime_error{"Model config is invalid: numKeyValueHeads must be non-zero."};
         if(cfg.hiddenSize % cfg.numHeads != 0u)
             throw std::runtime_error{"Model config is invalid: hiddenSize must be divisible by numHeads."};
-        if(cfg.numKeyValueHeads != cfg.numHeads)
-        {
-            throw std::runtime_error{
-                "Unsupported model config: grouped-query attention is not supported "
-                "(num_key_value_heads must equal num_attention_heads)."};
-        }
+        if(cfg.numHeads % cfg.numKeyValueHeads != 0u)
+            throw std::runtime_error{"Model config is invalid: numHeads must be divisible by numKeyValueHeads."};
     }
 
     template<typename T_Type, typename T_Device>
@@ -131,18 +129,20 @@ namespace alpakaNN::model
         layers.reserve(cfg.numLayers);
         for(uint32_t layer = 0u; layer < cfg.numLayers; ++layer)
         {
+            auto const headDim = cfg.hiddenSize / cfg.numHeads;
             layers.push_back(alpakaNN::inference::TransformerBlockWeights<T_Type, VectorBuffer, MatrixBuffer>{
                 load1D(cfg.hiddenSize),
                 load1D(cfg.hiddenSize),
                 load2D(cfg.hiddenSize, cfg.hiddenSize),
-                load2D(cfg.hiddenSize, cfg.hiddenSize),
-                load2D(cfg.hiddenSize, cfg.hiddenSize),
+                load2D(cfg.hiddenSize, cfg.numKeyValueHeads * headDim),
+                load2D(cfg.hiddenSize, cfg.numKeyValueHeads * headDim),
                 load2D(cfg.hiddenSize, cfg.hiddenSize),
                 load2D(cfg.hiddenSize, cfg.intermediateSize),
                 load2D(cfg.hiddenSize, cfg.intermediateSize),
                 load2D(cfg.intermediateSize, cfg.hiddenSize),
                 cfg.numHeads,
-                cfg.hiddenSize / cfg.numHeads,
+                cfg.numKeyValueHeads,
+                headDim,
                 cfg.rmsNormEpsilon});
         }
         auto finalNorm = load1D(cfg.hiddenSize);
@@ -179,9 +179,11 @@ namespace alpakaNN::model
     }
 
     template<typename T_Model>
-    auto prefill(auto& queue, auto exec, T_Model const& model, std::vector<uint32_t> const& tokenIds)
+    auto prefill(auto& queue, auto exec, T_Model const& model, std::vector<uint32_t> const& tokenIds, auto& cache)
     {
         using T_Type = typename T_Model::value_type;
+        if(tokenIds.empty())
+            throw std::invalid_argument{"prefill requires at least one token."};
 
         auto hostTokens = alpaka::onHost::allocHost<uint32_t>(static_cast<uint32_t>(tokenIds.size()));
         for(uint32_t i = 0u; i < tokenIds.size(); ++i)
@@ -197,13 +199,6 @@ namespace alpakaNN::model
             static_cast<uint32_t>(tokenIds.size()),
             model.config.hiddenSize / model.config.numHeads / 2u,
             static_cast<T_Type>(model.config.ropeTheta));
-        auto cache = alpakaNN::inference::makeKvCache<T_Type>(
-            queue.getDevice(),
-            model.config.numLayers,
-            1u,
-            model.config.numHeads,
-            static_cast<uint32_t>(tokenIds.size()),
-            model.config.hiddenSize / model.config.numHeads);
 
         for(uint32_t layer = 0u; layer < model.config.numLayers; ++layer)
         {
@@ -224,6 +219,71 @@ namespace alpakaNN::model
         auto norm = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
         nn::rmsNorm<T_Type>(queue, exec, hidden, model.finalNorm, norm, static_cast<T_Type>(model.config.rmsNormEpsilon));
         auto logits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.vocabSize});
+        alpakaNN::gemm<T_Type>(queue, exec, norm, model.lmHead, logits);
+        auto lastLogits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.vocabSize});
+        alpaka::onHost::memcpy(
+            queue,
+            lastLogits,
+            logits.getSubView(
+                alpaka::Vec{static_cast<uint32_t>(tokenIds.size() - 1u), 0u},
+                alpaka::Vec{1u, model.config.vocabSize}));
+        alpaka::onHost::wait(queue);
+        return lastLogits;
+    }
+
+    template<typename T_Model>
+    auto prefill(auto& queue, auto exec, T_Model const& model, std::vector<uint32_t> const& tokenIds)
+    {
+        using T_Type = typename T_Model::value_type;
+        auto cache = alpakaNN::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            static_cast<uint32_t>(tokenIds.size()),
+            model.config.hiddenSize / model.config.numHeads);
+        return prefill(queue, exec, model, tokenIds, cache);
+    }
+
+    template<typename T_Model>
+    auto decodeStep(auto& queue, auto exec, T_Model const& model, auto& cache, uint32_t tokenId)
+    {
+        using T_Type = typename T_Model::value_type;
+
+        auto hostToken = alpaka::onHost::allocHost<uint32_t>(1u);
+        hostToken[alpaka::Vec{0u}] = tokenId;
+        auto devToken = alpaka::onHost::allocLike(queue.getDevice(), hostToken);
+        alpaka::onHost::memcpy(queue, devToken, hostToken);
+
+        auto hidden = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.hiddenSize});
+        nn::embeddingLookup<T_Type>(queue, exec, devToken, model.embedding, hidden);
+
+        auto const currentContext = cache.length(0u, 0u);
+        auto ropeTables = makeRopeTables<T_Type>(
+            queue.getDevice(),
+            currentContext + 1u,
+            model.config.hiddenSize / model.config.numHeads / 2u,
+            static_cast<T_Type>(model.config.ropeTheta));
+
+        for(uint32_t layer = 0u; layer < model.config.numLayers; ++layer)
+        {
+            auto next = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
+            alpakaNN::inference::transformerBlockDecodeStep<T_Type>(
+                queue,
+                exec,
+                hidden,
+                model.layers[layer],
+                cache,
+                layer,
+                ropeTables.first,
+                ropeTables.second,
+                next);
+            hidden = next;
+        }
+
+        auto norm = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
+        nn::rmsNorm<T_Type>(queue, exec, hidden, model.finalNorm, norm, static_cast<T_Type>(model.config.rmsNormEpsilon));
+        auto logits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.vocabSize});
         alpakaNN::gemm<T_Type>(queue, exec, norm, model.lmHead, logits);
         alpaka::onHost::wait(queue);
         return logits;
