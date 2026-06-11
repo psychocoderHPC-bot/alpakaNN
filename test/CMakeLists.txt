@@ -42,7 +42,7 @@ file(MAKE_DIRECTORY ${TINY_LLAMA_DIR})
 
 message(STATUS "Downloading tiny LLaMA model to: ${TINY_LLAMA_DIR}")
 execute_process(
-    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/download_tiny_llama.py ${TINY_LLAMA_DIR}
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/download_tiny_llama.py tiny_llama ${TINY_LLAMA_DIR}
     RESULT_VARIABLE DOWNLOAD_RESULT
 )
 

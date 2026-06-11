@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(alpaka REQUIRED CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/alpakaNNTargets.cmake")
+
+if(TARGET alpakaNN::alpakaNN)
+    set_property(TARGET alpakaNN::alpakaNN APPEND PROPERTY INTERFACE_LINK_LIBRARIES alpaka::alpaka)
+endif()
