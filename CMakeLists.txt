@@ -50,13 +50,13 @@ target_include_directories(
 )
 target_link_libraries(alpakaNN INTERFACE $<BUILD_INTERFACE:alpaka::alpaka>)
 
+add_subdirectory(example/cli)
+
 if(alpakaNN_BUILD_TESTS)
     include(CTest)
     enable_testing()
     add_subdirectory(test)
 endif()
-
-add_subdirectory(example/cli)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 

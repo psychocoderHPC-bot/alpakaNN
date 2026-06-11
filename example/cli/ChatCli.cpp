@@ -6,17 +6,18 @@
 #include <alpaka/alpaka.hpp>
 #include <alpakaNN/alpakaNN.hpp>
 
-#include <algorithm>
-#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <tuple>
-#include <unordered_map>
+#include <unistd.h>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -24,270 +25,444 @@ namespace fs = std::filesystem;
 namespace
 {
     constexpr std::string_view MODEL_DIR = "models";
-    constexpr std::string_view CONFIG_FILE = "config.json";
+    constexpr std::string_view MODEL_MANIFEST = "alpaka_model.json";
+
+    struct CliOptions
+    {
+        std::string modelArg = "tiny_llama";
+        bool interactive = false;
+        bool showList = false;
+        bool showHelp = false;
+    };
+
+    struct ModelAssets
+    {
+        std::string displayName;
+        fs::path modelDir;
+        fs::path modelFile;
+        fs::path configFile;
+        fs::path tokenizerFile;
+    };
+
+    std::string shellQuote(std::string_view value)
+    {
+        std::string quoted = "'";
+        for(char ch : value)
+        {
+            if(ch == '\'')
+                quoted += "'\\''";
+            else
+                quoted += ch;
+        }
+        quoted += "'";
+        return quoted;
+    }
+
+    fs::path repoRoot()
+    {
+#ifdef ALPAKANN_SOURCE_DIR
+        return fs::path(ALPAKANN_SOURCE_DIR);
+#else
+        return fs::current_path();
+#endif
+    }
+
+    std::string readTextFile(fs::path const& path)
+    {
+        std::ifstream input(path);
+        if(!input)
+            throw std::runtime_error("Failed to open file: " + path.string());
+        return std::string(
+            (std::istreambuf_iterator<char>(input)),
+            std::istreambuf_iterator<char>());
+    }
+
+    void writeTextFile(fs::path const& path, std::string const& content)
+    {
+        std::ofstream output(path);
+        if(!output)
+            throw std::runtime_error("Failed to write file: " + path.string());
+        output << content;
+    }
+
+    std::string trim(std::string value)
+    {
+        auto const start = value.find_first_not_of(" \t\r\n");
+        if(start == std::string::npos)
+            return {};
+        auto const end = value.find_last_not_of(" \t\r\n");
+        return value.substr(start, end - start + 1u);
+    }
+
+    std::string extractJsonString(std::string const& json, std::string const& key)
+    {
+        auto const needle = "\"" + key + "\"";
+        auto const keyPos = json.find(needle);
+        if(keyPos == std::string::npos)
+            return {};
+        auto const colonPos = json.find(':', keyPos + needle.size());
+        if(colonPos == std::string::npos)
+            return {};
+        auto const firstQuote = json.find('"', colonPos + 1u);
+        if(firstQuote == std::string::npos)
+            return {};
+        std::string value;
+        for(size_t pos = firstQuote + 1u; pos < json.size(); ++pos)
+        {
+            auto const ch = json[pos];
+            if(ch == '"' && json[pos - 1u] != '\\')
+                return value;
+            value += ch;
+        }
+        return {};
+    }
+
+    std::string collectPipeOutput(std::FILE* pipe)
+    {
+        std::string output;
+        char buffer[512];
+        while(std::fgets(buffer, static_cast<int>(sizeof(buffer)), pipe) != nullptr)
+            output += buffer;
+        return output;
+    }
+
+    std::string runTokenizerHelper(fs::path const& modelDir, std::string_view mode, std::string const& payload, bool addBos = false, bool addEos = false)
+    {
+        auto const tmpPath = fs::temp_directory_path() /
+            ("alpakaNN-tokenizer-" + std::to_string(::getpid()) + "-" + std::to_string(std::rand()) + ".txt");
+        writeTextFile(tmpPath, payload);
+
+        auto const helperPath = repoRoot() / "tools" / "llama_tokenizer.py";
+        std::string command = "python3 " + shellQuote(helperPath.string()) + " " + std::string(mode) + " " +
+            shellQuote(modelDir.string());
+        if(addBos)
+            command += " --bos";
+        if(addEos)
+            command += " --eos";
+        command += " < " + shellQuote(tmpPath.string()) + " 2>&1";
+
+        auto* pipe = ::popen(command.c_str(), "r");
+        if(pipe == nullptr)
+        {
+            fs::remove(tmpPath);
+            throw std::runtime_error("Failed to launch tokenizer helper");
+        }
+
+        auto const output = collectPipeOutput(pipe);
+        auto const rc = ::pclose(pipe);
+        fs::remove(tmpPath);
+        if(rc != 0)
+            throw std::runtime_error("Tokenizer helper failed: " + trim(output));
+        return output;
+    }
+
+    std::vector<uint32_t> parseTokenIds(std::string const& text)
+    {
+        std::vector<uint32_t> tokenIds;
+        std::string number;
+        for(char ch : text)
+        {
+            if(ch >= '0' && ch <= '9')
+            {
+                number += ch;
+                continue;
+            }
+            if(!number.empty())
+            {
+                tokenIds.push_back(static_cast<uint32_t>(std::stoul(number)));
+                number.clear();
+            }
+        }
+        if(!number.empty())
+            tokenIds.push_back(static_cast<uint32_t>(std::stoul(number)));
+        return tokenIds;
+    }
+
+    std::string tokenIdsToJson(std::vector<uint32_t> const& tokenIds)
+    {
+        std::string json = "[";
+        for(size_t idx = 0; idx < tokenIds.size(); ++idx)
+        {
+            if(idx != 0u)
+                json += ",";
+            json += std::to_string(tokenIds[idx]);
+        }
+        json += "]";
+        return json;
+    }
+
+    struct PythonTokenizer
+    {
+        explicit PythonTokenizer(fs::path modelDirectory)
+            : modelDir(std::move(modelDirectory))
+        {
+        }
+
+        std::vector<uint32_t> encodePrompt(std::string const& text) const
+        {
+            return parseTokenIds(runTokenizerHelper(modelDir, "encode", text, true, false));
+        }
+
+        std::string decodeTokens(std::vector<uint32_t> const& tokenIds) const
+        {
+            return runTokenizerHelper(modelDir, "decode", tokenIdsToJson(tokenIds));
+        }
+
+        fs::path modelDir;
+    };
 
     std::string getModelBinName(std::string_view modelName)
     {
         return std::string(modelName) + ".bin";
     }
 
-    std::string getBasePath()
+    ModelAssets resolveModelAssets(std::string const& modelArg)
     {
-        auto cwd = fs::current_path();
-        return cwd.string();
+        auto const root = repoRoot();
+        fs::path candidate = modelArg;
+        if(!candidate.is_absolute())
+            candidate = root / candidate;
+
+        ModelAssets assets{};
+        if(fs::is_regular_file(candidate))
+        {
+            assets.modelFile = candidate;
+            assets.modelDir = candidate.parent_path();
+            assets.displayName = candidate.stem().string();
+        }
+        else
+        {
+            auto modelDir = candidate;
+            if(!fs::is_directory(modelDir))
+                modelDir = root / MODEL_DIR / modelArg;
+            if(!fs::is_directory(modelDir))
+                throw std::runtime_error("Model directory not found: " + modelArg);
+
+            assets.modelDir = modelDir;
+            assets.displayName = modelDir.filename().string();
+            auto const manifestPath = modelDir / MODEL_MANIFEST;
+            if(fs::exists(manifestPath))
+            {
+                auto const manifest = readTextFile(manifestPath);
+                auto const binaryName = extractJsonString(manifest, "binary_name");
+                if(!binaryName.empty())
+                    assets.modelFile = modelDir / binaryName;
+            }
+            if(assets.modelFile.empty())
+            {
+                auto const defaultPath = modelDir / getModelBinName(assets.displayName);
+                if(fs::exists(defaultPath))
+                    assets.modelFile = defaultPath;
+                else
+                {
+                    for(auto const& entry : fs::directory_iterator(modelDir))
+                    {
+                        if(entry.is_regular_file() && entry.path().extension() == ".bin")
+                        {
+                            assets.modelFile = entry.path();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        assets.configFile = assets.modelDir / "config.json";
+        assets.tokenizerFile = assets.modelDir / "tokenizer.json";
+        if(assets.modelFile.empty())
+            throw std::runtime_error("No .bin model file found in: " + assets.modelDir.string());
+        if(!fs::exists(assets.configFile))
+            throw std::runtime_error("Missing config.json in: " + assets.modelDir.string());
+        if(!fs::exists(assets.tokenizerFile))
+            throw std::runtime_error("Missing tokenizer.json in: " + assets.modelDir.string());
+        return assets;
     }
 
-    std::string getModelPath(std::string_view modelName)
+    bool modelInstalled(std::string const& modelArg)
     {
-        return fs::path(getBasePath()) / MODEL_DIR / modelName / getModelBinName(modelName);
-    }
-
-    bool modelExists(std::string_view modelName)
-    {
-        return fs::exists(getModelPath(modelName));
+        try
+        {
+            auto const assets = resolveModelAssets(modelArg);
+            return fs::exists(assets.modelFile);
+        }
+        catch(...)
+        {
+            return false;
+        }
     }
 
     void listModels()
     {
+        auto const modelsRoot = repoRoot() / MODEL_DIR;
         std::cout << "Available models:" << std::endl;
-        auto base = fs::path(getBasePath()) / MODEL_DIR;
-        if(fs::exists(base))
-        {
-            for(const auto& entry : fs::directory_iterator(base))
-            {
-                if(entry.is_directory())
-                {
-                    std::cout << "  - " << entry.path().filename().string() << std::endl;
-                }
-            }
-        }
-        else
+        if(!fs::exists(modelsRoot))
         {
             std::cout << "  No models downloaded yet." << std::endl;
-        }
-    }
-
-    void downloadModel(std::string_view modelName)
-    {
-        std::cout << "Downloading model: " << modelName << std::endl;
-
-        auto modelPath = fs::path(getBasePath()) / MODEL_DIR / modelName;
-        fs::create_directories(modelPath);
-
-        std::cout << "  Converting to binary format..." << std::endl;
-        std::string downloadCmd = "python3 " + 
-            std::string(fs::path(getBasePath()) / "tools" / "download_tiny_llama.py") + 
-            " " + std::string(modelName) + 
-            " " + modelPath.string();
-        
-        if(std::system(downloadCmd.c_str()) != 0)
-        {
-            std::cerr << "Failed to download or convert model" << std::endl;
             return;
         }
 
-        std::cout << "Model downloaded successfully to: " << modelPath << std::endl;
+        for(auto const& entry : fs::directory_iterator(modelsRoot))
+        {
+            if(!entry.is_directory())
+                continue;
+            std::cout << "  - " << entry.path().filename().string();
+            auto const manifestPath = entry.path() / MODEL_MANIFEST;
+            if(fs::exists(manifestPath))
+            {
+                auto const manifest = readTextFile(manifestPath);
+                auto const status = extractJsonString(manifest, "status");
+                if(!status.empty())
+                    std::cout << " (" << status << ")";
+            }
+            std::cout << std::endl;
+        }
     }
 
-    struct Tokenizer
+    void downloadModel(std::string const& modelName)
     {
-        std::vector<std::string> vocab;
-        std::unordered_map<std::string, uint32_t> tokenToId;
+        auto const modelDir = repoRoot() / MODEL_DIR / modelName;
+        fs::create_directories(modelDir);
+        auto const downloader = repoRoot() / "tools" / "download_tiny_llama.py";
+        std::string command = "python3 " + shellQuote(downloader.string()) + " " + shellQuote(modelName) + " " +
+            shellQuote(modelDir.string());
+        auto const rc = std::system(command.c_str());
+        if(rc != 0)
+            throw std::runtime_error("Failed to download model: " + modelName);
+    }
 
-        Tokenizer(std::string_view modelDir, std::string_view modelName)
-        {
-            fs::path vocabPath = fs::path(modelDir) / modelName / "vocab.json";
-            
-            std::ifstream vocabFile(vocabPath.string());
-            if(!vocabFile)
-            {
-                throw std::runtime_error("Failed to open vocab file: " + vocabPath.string());
-            }
-
-            std::string content((std::istreambuf_iterator<char>(vocabFile)), std::istreambuf_iterator<char>());
-            vocabFile.close();
-
-            // Parse vocab.json array format: ["<unk>", "<s>", ...]
-            // Each token is a quoted string, with optional int index before it
-            size_t pos = 0;
-            uint32_t id = 0;
-            
-            while(pos < content.length())
-            {
-                // Skip whitespace, commas, and opening bracket
-                while(pos < content.length() && 
-                      (content[pos] == ' ' || content[pos] == '\t' || 
-                       content[pos] == '\n' || content[pos] == '\r' || 
-                       content[pos] == ',' || content[pos] == '[' || content[pos] == ']'))
-                    pos++;
-                
-                if(pos >= content.length())
-                    break;
-                
-                // Now we should be at a quoted string
-                if(content[pos] == '"')
-                {
-                    pos++; // Skip opening quote
-                    size_t quoteEnd = content.find('"', pos);
-                    if(quoteEnd == std::string::npos)
-                        break;
-                    
-                    std::string token = content.substr(pos, quoteEnd - pos);
-                    pos = quoteEnd + 1; // Skip closing quote
-                    
-                    // Resize vocab if needed
-                    if(id >= vocab.size())
-                        vocab.resize(id + 1);
-                    
-                    vocab[id] = token;
-                    tokenToId[token] = id;
-                    
-                    id++;
-                }
-                else
-                {
-                    // Skip this character and continue
-                    pos++;
-                }
-            }
-        }
-
-        std::vector<uint32_t> encode(std::string_view text) const
-        {
-            std::vector<uint32_t> tokens;
-            tokens.push_back(1);
-
-            std::string lowerText;
-            for(char c : text)
-            {
-                lowerText += std::tolower(c);
-            }
-
-            std::string currentToken;
-            for(size_t i = 0; i < lowerText.length(); ++i)
-            {
-                currentToken += lowerText[i];
-
-                bool found = false;
-                for(int j = currentToken.length(); j > 0; --j)
-                {
-                    std::string substr = currentToken.substr(0, j);
-                    auto it = std::find(vocab.begin(), vocab.end(), substr);
-                    if(it != vocab.end())
-                    {
-                        tokens.push_back(std::distance(vocab.begin(), it));
-                        currentToken = currentToken.substr(j);
-                        found = true;
-                        break;
-                    }
-                }
-
-                if(!found)
-                {
-                    currentToken = "";
-                }
-            }
-
-            if(!currentToken.empty())
-            {
-                for(char c : currentToken)
-                {
-                    auto it = std::find(vocab.begin(), vocab.end(), std::string(1, c));
-                    if(it != vocab.end())
-                    {
-                        tokens.push_back(std::distance(vocab.begin(), it));
-                    }
-                }
-            }
-
-            tokens.push_back(2);
-            return tokens;
-        }
-
-        std::string decode(const std::vector<uint32_t>& tokens) const
-        {
-            std::string result;
-            for(size_t i = 1; i < tokens.size() - 1; ++i)
-            {
-                if(tokens[i] < vocab.size())
-                {
-                    result += vocab[tokens[i]];
-                }
-            }
-            return result;
-        }
-    };
-}
-
-int main(int argc, char* argv[])
-{
-    std::string modelPath;
-    bool showList = false;
-
-    for(int i = 1; i < argc; ++i)
+    CliOptions parseArgs(int argc, char* argv[])
     {
-        std::string_view arg = argv[i];
-        if(arg == "--model" || arg == "-m")
+        CliOptions options{};
+        for(int i = 1; i < argc; ++i)
         {
-            if(i + 1 < argc)
+            std::string_view arg = argv[i];
+            if(arg == "-m" || arg == "--model")
             {
-                modelPath = argv[++i];
+                if(i + 1 >= argc)
+                    throw std::runtime_error("--model requires a value");
+                options.modelArg = argv[++i];
+            }
+            else if(arg == "-i" || arg == "--interactive")
+            {
+                options.interactive = true;
+            }
+            else if(arg == "-l" || arg == "--list")
+            {
+                options.showList = true;
+            }
+            else if(arg == "-h" || arg == "--help")
+            {
+                options.showHelp = true;
             }
             else
             {
-                std::cerr << "Error: --model requires a value" << std::endl;
-                return 1;
+                throw std::runtime_error("Unknown argument: " + std::string(arg));
             }
         }
-        else if(arg == "--list" || arg == "-l")
+        return options;
+    }
+
+    bool isNamedModelPreset(std::string const& modelArg)
+    {
+        return modelArg.find('/') == std::string::npos && modelArg.find('\\') == std::string::npos;
+    }
+
+    void printHelp(char const* argv0)
+    {
+        std::cout << "Usage: " << argv0 << " [options]\n\n"
+                  << "Without arguments the CLI runs a tiny_llama self-test and exits.\n\n"
+                  << "Options:\n"
+                  << "  -i, --interactive     Start interactive chat mode\n"
+                  << "  -m, --model MODEL     Model name, model directory, or .bin path\n"
+                  << "  -l, --list            List downloaded models\n"
+                  << "  -h, --help            Show this help message\n";
+    }
+
+    template<typename T_Model>
+    void runSelfTest(auto& queue, auto exec, T_Model const& model, PythonTokenizer const& tokenizer)
+    {
+        std::string const prompt = "User: Hello\nAssistant:";
+        auto const promptTokens = tokenizer.encodePrompt(prompt);
+        if(promptTokens.empty())
+            throw std::runtime_error("Self-test prompt encoding returned no tokens");
+
+        auto generated = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, 8u);
+        if(generated.size() <= promptTokens.size())
+            throw std::runtime_error("Self-test generation returned no new tokens");
+
+        std::vector<uint32_t> newTokens(generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()), generated.end());
+        auto const decoded = tokenizer.decodeTokens(newTokens);
+
+        std::cout << "=== alpakaNN Chat CLI Self-Test ===" << std::endl;
+        std::cout << "Model: tiny_llama (CI/smoke only)" << std::endl;
+        std::cout << "Prompt token count: " << promptTokens.size() << std::endl;
+        std::cout << "Generated token ids:";
+        for(auto tokenId : newTokens)
+            std::cout << ' ' << tokenId;
+        std::cout << std::endl;
+        std::cout << "Decoded suffix: " << decoded << std::endl;
+        std::cout << "SELF-TEST PASSED" << std::endl;
+    }
+
+    template<typename T_Model>
+    void runInteractiveChat(auto& queue, auto exec, T_Model const& model, PythonTokenizer const& tokenizer)
+    {
+        std::cout << "Interactive chat mode. Type 'quit' or 'exit' to end." << std::endl;
+        std::cout << "Note: useful English output requires a trained supported non-GQA Llama-family model." << std::endl;
+
+        std::string transcript;
+        std::string line;
+        while(true)
         {
-            showList = true;
+            std::cout << "> " << std::flush;
+            if(!std::getline(std::cin, line))
+                break;
+            if(line == "quit" || line == "exit")
+                break;
+            if(line.empty())
+                continue;
+
+            if(!transcript.empty())
+                transcript += '\n';
+            transcript += "User: " + line + "\nAssistant:";
+
+            auto const promptTokens = tokenizer.encodePrompt(transcript);
+            auto generated = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, 64u);
+            std::vector<uint32_t> newTokens(generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()), generated.end());
+            auto response = trim(tokenizer.decodeTokens(newTokens));
+            std::cout << response << std::endl;
+            transcript += response;
         }
-        else if(arg == "--help" || arg == "-h")
-        {
-            std::cout << "Usage: " << argv[0] << " [options]" << std::endl;
-            std::cout << std::endl;
-            std::cout << "Options:" << std::endl;
-            std::cout << "  --model NAME, -m NAME  Specify model name to use" << std::endl;
-            std::cout << "  --list, -l             List available models" << std::endl;
-            std::cout << "  --help, -h             Show this help message" << std::endl;
-            std::cout << std::endl;
-            std::cout << "Examples:" << std::endl;
-            std::cout << "  " << argv[0] << " --list" << std::endl;
-            std::cout << "  " << argv[0] << " --model tiny_llama" << std::endl;
-            return 0;
-        }
     }
+} // namespace
 
-    if(showList)
-    {
-        listModels();
-        return 0;
-    }
-
-    if(modelPath.empty())
-    {
-        modelPath = "tiny_llama";
-    }
-
-    auto modelFilePath = getModelPath(modelPath);
-    
-    if(!modelExists(modelPath))
-    {
-        std::cout << "Model '" << modelPath << "' not found. Downloading..." << std::endl;
-        downloadModel(modelPath);
-    }
-
-    if(!modelExists(modelPath))
-    {
-        std::cerr << "Failed to download or find model: " << modelPath << std::endl;
-        return 1;
-    }
-    
-    std::cout << "Loading model: " << modelPath << std::endl;
-
+int main(int argc, char* argv[])
+{
     try
     {
+        auto const options = parseArgs(argc, argv);
+        if(options.showHelp)
+        {
+            printHelp(argv[0]);
+            return 0;
+        }
+        if(options.showList)
+        {
+            listModels();
+            return 0;
+        }
+
+        std::srand(static_cast<unsigned>(::getpid()));
+
+        if(!modelInstalled(options.modelArg))
+        {
+            if(!isNamedModelPreset(options.modelArg))
+                throw std::runtime_error("Model path not found: " + options.modelArg);
+            std::cout << "Model '" << options.modelArg << "' not found locally. Downloading..." << std::endl;
+            downloadModel(options.modelArg);
+        }
+
+        auto const assets = resolveModelAssets(options.modelArg);
         auto backends = alpaka::onHost::allBackends(
             alpaka::onHost::enabledDeviceSpecs,
             alpaka::exec::enabledExecutors);
@@ -297,76 +472,19 @@ int main(int argc, char* argv[])
         auto queue = device.makeQueue();
         auto exec = cfg[alpaka::object::exec];
 
-        auto model = alpakaNN::model::loadTinyLlama<float>(device, modelFilePath);
+        auto model = alpakaNN::model::loadTinyLlama<float>(device, assets.modelFile.string());
+        PythonTokenizer tokenizer(assets.modelDir);
 
-        Tokenizer tokenizer(MODEL_DIR.data(), modelPath);
+        if(options.interactive)
+            runInteractiveChat(queue, exec, model, tokenizer);
+        else
+            runSelfTest(queue, exec, model, tokenizer);
 
-        std::cout << "Model loaded successfully!" << std::endl;
-        
-        if(modelPath == "tiny_llama" && argc <= 1)
-        {
-            std::cout << "=== alpakaNN Chat CLI - Self Test ===" << std::endl;
-            std::cout << std::endl;
-
-            std::cout << "Running self-test with sample input..." << std::endl;
-            std::cout << "---" << std::endl;
-
-            std::string testInput = "Hello";
-            auto testTokens = tokenizer.encode(testInput);
-            std::cout << "Tokens: ";
-            for(auto t : testTokens) std::cout << t << " ";
-            std::cout << "(size=" << testTokens.size() << ")" << std::endl;
-            std::cout << "About to call generateGreedy..." << std::endl;
-            auto responseTokens = alpakaNN::inference::generateGreedy(
-                queue, exec, model, testTokens, 20u);
-            auto response = tokenizer.decode(responseTokens);
-            std::cout << "Decoded response!" << std::endl;
-
-            std::cout << "> " << testInput << std::endl;
-            std::cout << response << std::endl;
-            std::cout << "---" << std::endl;
-            std::cout << std::endl;
-        }
-
-        std::cout << "Starting interactive chat. Type 'quit' or 'exit' to end." << std::endl;
-        std::cout << "Usage: " << argv[0] << " --model tiny_llama" << std::endl;
-        std::cout << "  or simply: " << argv[0] << std::endl;
-        std::cout << std::endl;
-
-        std::vector<uint32_t> chatHistory;
-        chatHistory.push_back(1);
-
-        std::string line;
-        while(std::getline(std::cin, line))
-        {
-            if(line == "quit" || line == "exit")
-            {
-                std::cout << "Goodbye!" << std::endl;
-                break;
-            }
-
-            if(line.empty())
-                continue;
-
-            auto promptTokens = tokenizer.encode(line);
-            chatHistory.insert(chatHistory.end(), promptTokens.begin(), promptTokens.end());
-
-            std::cout << "> " << line << std::endl;
-
-            auto responseTokens = alpakaNN::inference::generateGreedy(
-                queue, exec, model, chatHistory, 50u);
-
-            auto response = tokenizer.decode(responseTokens);
-            std::cout << response << std::endl;
-
-            chatHistory = responseTokens;
-        }
+        return 0;
     }
-    catch(const std::exception& e)
+    catch(std::exception const& error)
     {
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "Error: " << error.what() << std::endl;
         return 1;
     }
-
-    return 0;
 }

@@ -73,6 +73,20 @@ namespace alpakaNN::model
         return cfg;
     }
 
+    inline void validateSupportedConfig(ModelConfig const& cfg)
+    {
+        if(cfg.numHeads == 0u)
+            throw std::runtime_error{"Model config is invalid: numHeads must be non-zero."};
+        if(cfg.hiddenSize % cfg.numHeads != 0u)
+            throw std::runtime_error{"Model config is invalid: hiddenSize must be divisible by numHeads."};
+        if(cfg.numKeyValueHeads != cfg.numHeads)
+        {
+            throw std::runtime_error{
+                "Unsupported model config: grouped-query attention is not supported "
+                "(num_key_value_heads must equal num_attention_heads)."};
+        }
+    }
+
     template<typename T_Type, typename T_Device>
     auto loadTinyLlama(T_Device const& device, std::string const& path)
     {
@@ -84,6 +98,7 @@ namespace alpakaNN::model
             throw std::runtime_error{"Failed to open model file: " + path};
 
         auto cfg = readConfig(input);
+        validateSupportedConfig(cfg);
         auto deviceCopy = device;
         auto queue = deviceCopy.makeQueue();
 
