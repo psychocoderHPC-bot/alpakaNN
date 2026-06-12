@@ -5,10 +5,9 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onAcc/internal/nn/embedding.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 #include <stdexcept>

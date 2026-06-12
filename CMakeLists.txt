@@ -21,6 +21,16 @@ option(alpakaNN_BUILD_TESTS "Build alpakaNN unit tests." ${PROJECT_IS_TOP_LEVEL}
 option(alpakaNN_OPENBLAS "Enable OpenBLAS host dispatch for GEMM/GEMV." ON)
 set(alpaka_COMPILE_PEDANTIC ON CACHE BOOL "Compile all code with strict compiler settings." FORCE)
 
+if(alpaka_DEP_CUDA)
+    enable_language(CUDA)
+    find_package(CUDAToolkit)
+    if(NOT CUDAToolkit_FOUND)
+        message(STATUS "Optional CUDAToolkit not found, but required by alpaka.")
+    else()
+        message(STATUS "Found optional CUDAToolkit")
+    endif()
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -63,9 +73,7 @@ target_compile_features(alpakaNN INTERFACE cxx_std_20)
 target_compile_definitions(alpakaNN INTERFACE ALPAKANN_OPENBLAS_ENABLED=$<BOOL:${alpakaNN_OPENBLAS}>)
 target_include_directories(
     alpakaNN
-    INTERFACE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(alpakaNN INTERFACE $<BUILD_INTERFACE:alpaka::alpaka>)
 if(alpakaNN_OPENBLAS)
@@ -74,6 +82,10 @@ if(alpakaNN_OPENBLAS)
         alpakaNN
         INTERFACE $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated> $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
     )
+endif()
+
+if(CUDAToolkit_FOUND)
+    target_link_libraries(alpakaNN INTERFACE CUDA::cublas)
 endif()
 
 add_subdirectory(example/cli)

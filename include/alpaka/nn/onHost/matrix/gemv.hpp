@@ -5,11 +5,10 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onAcc/internal/matrix/gemv.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
 #include <alpaka/nn/onHost/matrix/internal/blas.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 #include <stdexcept>

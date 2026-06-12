@@ -5,14 +5,13 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/nn/attention.hpp>
 #include <alpaka/nn/onAcc/internal/nn/attention.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
 #include <alpaka/nn/onHost/matrix/gemm.hpp>
 #include <alpaka/nn/onHost/nn/softmax.hpp>
 #include <alpaka/nn/onHost/ops/elementwise.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 

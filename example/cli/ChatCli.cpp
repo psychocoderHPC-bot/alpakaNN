@@ -4,8 +4,8 @@
  */
 
 #include <alpaka/alpaka.hpp>
-
 #include <alpaka/nn/nn.hpp>
+
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -569,8 +569,12 @@ namespace
                 transcript += "User: " + line + "\nAssistant:";
                 promptTokens = tokenizer.encodePrompt(transcript);
             }
-            auto generated
-                = alpaka::nn::onHost::inference::generateGreedy(queue, exec, model, promptTokens, options.maxNewTokens);
+            auto generated = alpaka::nn::onHost::inference::generateGreedy(
+                queue,
+                exec,
+                model,
+                promptTokens,
+                options.maxNewTokens);
             std::vector<uint32_t> newTokens(
                 generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()),
                 generated.end());

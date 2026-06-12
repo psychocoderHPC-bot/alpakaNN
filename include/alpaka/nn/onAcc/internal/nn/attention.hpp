@@ -5,9 +5,8 @@
 
 #pragma once
 
-#include <alpaka/nn/nn/attention.hpp>
-
 #include <alpaka/alpaka.hpp>
+#include <alpaka/nn/nn/attention.hpp>
 
 #include <cstdint>
 

@@ -7,7 +7,6 @@
 
 #include <alpaka/alpaka.hpp>
 #include <alpaka/fn.hpp>
-
 #include <alpaka/nn/core/shape.hpp>
 
 #include <cstdint>

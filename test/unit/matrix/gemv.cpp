@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: ISC
  */
 
-#include "../test.hpp"
+#include "test.hpp"
 
 #include <alpaka/alpaka.hpp>
-
 #include <alpaka/nn/nn.hpp>
+
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 

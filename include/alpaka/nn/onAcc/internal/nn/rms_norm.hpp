@@ -22,7 +22,8 @@ namespace alpaka::nn::onAcc::internal::nn
             auto const hiddenAxis = extents.dim() - 1u;
             auto const hiddenExtent = static_cast<uint32_t>(extents[hiddenAxis]);
 
-            for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{extents}))
+            for(auto idx :
+                alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{extents}))
             {
                 auto reduceIdx = idx;
                 T_Type sumSquares{};

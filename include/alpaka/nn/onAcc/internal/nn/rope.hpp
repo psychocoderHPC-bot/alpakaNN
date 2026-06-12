@@ -5,9 +5,8 @@
 
 #pragma once
 
-#include <alpaka/nn/nn/rope.hpp>
-
 #include <alpaka/alpaka.hpp>
+#include <alpaka/nn/nn/rope.hpp>
 
 #include <cstdint>
 
@@ -44,8 +43,8 @@ namespace alpaka::nn::onAcc::internal::nn
                 auto const position = positionOffset + static_cast<uint32_t>(tokenIndex(out, idx));
                 auto const cosValue = cosTable[alpaka::Vec{position, pair}];
                 auto const sinValue = sinTable[alpaka::Vec{position, pair}];
-                out[idx] = (component % 2u == 0u) ? (even * cosValue - odd * sinValue)
-                                                  : (even * sinValue + odd * cosValue);
+                out[idx]
+                    = (component % 2u == 0u) ? (even * cosValue - odd * sinValue) : (even * sinValue + odd * cosValue);
             }
         }
     };

@@ -17,10 +17,8 @@ namespace alpaka::nn::onAcc::internal::matrix
         ALPAKA_FN_ACC void operator()(auto const& acc, auto const W, auto const x, auto y) const
         {
             auto const matrixExtent = W.getExtents();
-            for(auto idx : alpaka::onAcc::makeIdxMap(
-                    acc,
-                    alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{y.getExtents()}))
+            for(auto idx :
+                alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{y.getExtents()}))
             {
                 T_Type sum{};
                 for(uint32_t inner = 0u; inner < matrixExtent.x(); ++inner)

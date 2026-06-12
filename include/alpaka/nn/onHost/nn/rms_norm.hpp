@@ -5,10 +5,9 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onAcc/internal/nn/rms_norm.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 #include <stdexcept>
@@ -26,6 +25,10 @@ namespace alpaka::nn::onHost::nn
 
         queue.enqueue(
             alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, output.getExtents()),
-            alpaka::KernelBundle{alpaka::nn::onAcc::internal::nn::RmsNormKernel<T_Type>{epsilon}, output, input, weight});
+            alpaka::KernelBundle{
+                alpaka::nn::onAcc::internal::nn::RmsNormKernel<T_Type>{epsilon},
+                output,
+                input,
+                weight});
     }
 } // namespace alpaka::nn::onHost::nn

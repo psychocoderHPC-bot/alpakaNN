@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onHost/inference/kv_cache.hpp>
 #include <alpaka/nn/onHost/nn/attention.hpp>
 #include <alpaka/nn/onHost/nn/mlp.hpp>
@@ -12,8 +13,6 @@
 #include <alpaka/nn/onHost/nn/rope.hpp>
 #include <alpaka/nn/onHost/nn/softmax.hpp>
 #include <alpaka/nn/onHost/ops/elementwise.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 
@@ -87,7 +86,14 @@ namespace alpaka::nn::onHost::inference
             attn.data(),
             alpaka::Vec{1u, tokens, weights.numHeads, weights.headDim});
 
-        alpaka::nn::onHost::nn::attentionScores<T_Type>(queue, exec, q4, k4, scores, queriesPerKvGroup, alpaka::nn::AttentionKvLayout::BTHD);
+        alpaka::nn::onHost::nn::attentionScores<T_Type>(
+            queue,
+            exec,
+            q4,
+            k4,
+            scores,
+            queriesPerKvGroup,
+            alpaka::nn::AttentionKvLayout::BTHD);
         alpaka::nn::onHost::ops::scale<T_Type>(
             queue,
             exec,
@@ -95,7 +101,14 @@ namespace alpaka::nn::onHost::inference
             static_cast<T_Type>(1) / alpaka::math::sqrt(static_cast<T_Type>(weights.headDim)),
             scores);
         alpaka::nn::onHost::nn::causalSoftmax<T_Type>(queue, exec, scores, probs, 3u, 2u, 3u);
-        alpaka::nn::onHost::nn::attentionApply<T_Type>(queue, exec, probs, v4, attn4, queriesPerKvGroup, alpaka::nn::AttentionKvLayout::BTHD);
+        alpaka::nn::onHost::nn::attentionApply<T_Type>(
+            queue,
+            exec,
+            probs,
+            v4,
+            attn4,
+            queriesPerKvGroup,
+            alpaka::nn::AttentionKvLayout::BTHD);
         alpaka::nn::onHost::nn::outputProjection<T_Type>(queue, exec, attn, weights.Wo, proj);
         alpaka::nn::onHost::ops::add<T_Type>(queue, exec, input, proj, output);
         alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, output, weights.rms2Weight, norm2, weights.epsilon);
@@ -152,8 +165,22 @@ namespace alpaka::nn::onHost::inference
             v.data(),
             alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
         auto const tokenPosition = cache.length(layer, 0u);
-        alpaka::nn::onHost::nn::ropeInPlace<T_Type>(queue, exec, q4, ropeCos, ropeSin, alpaka::nn::RopeLayout::BTHD, tokenPosition);
-        alpaka::nn::onHost::nn::ropeInPlace<T_Type>(queue, exec, k4, ropeCos, ropeSin, alpaka::nn::RopeLayout::BTHD, tokenPosition);
+        alpaka::nn::onHost::nn::ropeInPlace<T_Type>(
+            queue,
+            exec,
+            q4,
+            ropeCos,
+            ropeSin,
+            alpaka::nn::RopeLayout::BTHD,
+            tokenPosition);
+        alpaka::nn::onHost::nn::ropeInPlace<T_Type>(
+            queue,
+            exec,
+            k4,
+            ropeCos,
+            ropeSin,
+            alpaka::nn::RopeLayout::BTHD,
+            tokenPosition);
 
         cache.append(queue, exec, layer, 0u, tokenPosition, k4, v4);
         auto const contextTokens = cache.length(layer, 0u);
@@ -166,7 +193,14 @@ namespace alpaka::nn::onHost::inference
         auto attn4
             = alpaka::makeView(queue.getDevice(), attn.data(), alpaka::Vec{1u, 1u, weights.numHeads, weights.headDim});
 
-        alpaka::nn::onHost::nn::attentionScores<T_Type>(queue, exec, q4, keys, scores, queriesPerKvGroup, alpaka::nn::AttentionKvLayout::BHTD);
+        alpaka::nn::onHost::nn::attentionScores<T_Type>(
+            queue,
+            exec,
+            q4,
+            keys,
+            scores,
+            queriesPerKvGroup,
+            alpaka::nn::AttentionKvLayout::BHTD);
         alpaka::nn::onHost::ops::scale<T_Type>(
             queue,
             exec,
@@ -174,7 +208,14 @@ namespace alpaka::nn::onHost::inference
             static_cast<T_Type>(1) / alpaka::math::sqrt(static_cast<T_Type>(weights.headDim)),
             scores);
         alpaka::nn::onHost::nn::softmax<T_Type>(queue, exec, scores, probs, 3u);
-        alpaka::nn::onHost::nn::attentionApply<T_Type>(queue, exec, probs, values, attn4, queriesPerKvGroup, alpaka::nn::AttentionKvLayout::BHTD);
+        alpaka::nn::onHost::nn::attentionApply<T_Type>(
+            queue,
+            exec,
+            probs,
+            values,
+            attn4,
+            queriesPerKvGroup,
+            alpaka::nn::AttentionKvLayout::BHTD);
         alpaka::nn::onHost::nn::outputProjection<T_Type>(queue, exec, attn, weights.Wo, proj);
         alpaka::nn::onHost::ops::add<T_Type>(queue, exec, input, proj, output);
         alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, output, weights.rms2Weight, norm2, weights.epsilon);

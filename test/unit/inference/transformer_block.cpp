@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: ISC
  */
 
-#include "../test.hpp"
+#include "test.hpp"
 
 #include <alpaka/nn/nn.hpp>
+
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -111,16 +112,8 @@ TEMPLATE_LIST_TEST_CASE(
         headDim,
         1.0e-5f};
     auto cache = alpaka::nn::onHost::inference::makeKvCache<float>(device, 1u, 1u, kvHeads, tokens, headDim);
-    alpaka::nn::onHost::inference::transformerBlock<float>(
-        queue,
-        exec,
-        devInput,
-        weights,
-        cache,
-        0u,
-        devCos,
-        devSin,
-        devOutput);
+    alpaka::nn::onHost::inference::transformerBlock<
+        float>(queue, exec, devInput, weights, cache, 0u, devCos, devSin, devOutput);
     alpaka::onHost::memcpy(queue, input, devOutput);
     alpaka::onHost::wait(queue);
 

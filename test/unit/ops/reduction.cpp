@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: ISC
  */
 
-#include "../test.hpp"
+#include "test.hpp"
 
 #include <alpaka/alpaka.hpp>
-
 #include <alpaka/nn/nn.hpp>
+
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -40,7 +40,8 @@ TEMPLATE_LIST_TEST_CASE("axis reductions", "[ops][reduction]", TestApis)
 
     auto hostIn = alpaka::onHost::allocHost<double>(alpaka::Vec{2u, 3u, 4u});
     initReductionInput<double>(hostIn);
-    auto hostOut = alpaka::onHost::allocHost<double>(alpaka::nn::onHost::ops::makeReducedExtents(hostIn.getExtents(), 2u));
+    auto hostOut
+        = alpaka::onHost::allocHost<double>(alpaka::nn::onHost::ops::makeReducedExtents(hostIn.getExtents(), 2u));
     auto devIn = alpaka::onHost::allocLike(device, hostIn);
     auto devOut = alpaka::onHost::allocLike(device, hostOut);
 
@@ -95,7 +96,8 @@ TEMPLATE_LIST_TEST_CASE("axis reductions", "[ops][reduction]", TestApis)
             std::array<std::size_t, 3u>{24u, 8u, 1u});
         initReductionInput<float>(lhs);
         initReductionInput<float>(rhs);
-        auto hostDot = alpaka::onHost::allocHost<float>(alpaka::nn::onHost::ops::makeReducedExtents(lhs.getExtents(), 1u));
+        auto hostDot
+            = alpaka::onHost::allocHost<float>(alpaka::nn::onHost::ops::makeReducedExtents(lhs.getExtents(), 1u));
         auto devLhs = alpaka::onHost::allocLike(device, lhs);
         auto devRhs = alpaka::onHost::allocLike(device, rhs);
         auto devDot = alpaka::onHost::allocLike(device, hostDot);

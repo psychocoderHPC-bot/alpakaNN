@@ -6,9 +6,9 @@
 #pragma once
 
 #include "alpaka/nn/core/shape.hpp"
-#include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <alpaka/alpaka.hpp>
+#include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <concepts>
 #include <cstdint>
@@ -341,7 +341,12 @@ namespace alpaka::nn::onHost::ops
         binaryOp(queue, exec, x, y, out, detail::AxpyOp<T_Type>{alpha});
     }
 
-    void biasAdd(auto& queue, auto exec, auto const& input, auto const& bias, auto& out)
+    void biasAdd(
+        auto& queue,
+        auto exec,
+        alpaka::concepts::IMdSpan auto const& input,
+        alpaka::concepts::IMdSpan auto const& bias,
+        alpaka::concepts::IMdSpan auto& out)
     {
         detail::requireSameShape(input, out, "biasAdd");
         detail::requireBiasShape(input, bias);

@@ -5,9 +5,8 @@
 
 #pragma once
 
-#include <alpaka/nn/onHost/model/decoder.hpp>
-
 #include <alpaka/alpaka.hpp>
+#include <alpaka/nn/onHost/model/decoder.hpp>
 
 #include <cstdint>
 #include <vector>

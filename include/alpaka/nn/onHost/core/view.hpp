@@ -6,7 +6,6 @@
 #pragma once
 
 #include <alpaka/alpaka.hpp>
-
 #include <alpaka/nn/core/shape.hpp>
 
 #include <array>

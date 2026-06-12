@@ -5,9 +5,8 @@
 
 #pragma once
 
-#include <alpaka/nn/onHost/internal/launch.hpp>
-
 #include <alpaka/alpaka.hpp>
+#include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <cstdint>
 #include <stdexcept>

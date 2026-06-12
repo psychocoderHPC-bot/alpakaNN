@@ -5,11 +5,10 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onAcc/internal/matrix/gemm.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
 #include <alpaka/nn/onHost/matrix/internal/blas.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 #include <stdexcept>
@@ -119,3 +118,84 @@ namespace alpaka::nn::onHost
         internal::GemmFn::call(queue, exec, std::type_identity<T_Type>{}, A, B, C);
     }
 } // namespace alpaka::nn::onHost
+
+#if __has_include(<cublas_v2.h>)
+#    include <cublas_v2.h>
+
+namespace alpaka::nn::onHost
+{
+    namespace internal
+    {
+        template<typename T>
+        struct CudaDataType;
+
+        template<>
+        struct CudaDataType<float>
+        {
+            static constexpr cudaDataType_t value = CUDA_R_32F;
+        };
+
+        template<>
+        struct CudaDataType<double>
+        {
+            static constexpr cudaDataType_t value = CUDA_R_64F;
+        };
+
+        template<alpaka::concepts::DeviceKind T_DeviceKind, typename T_Type>
+        void fnDispatch(
+            GemmFn::Spec<alpaka::api::Cuda, T_DeviceKind>,
+            auto& queue,
+            [[maybe_unused]] auto exec,
+            std::type_identity<T_Type>,
+            auto const& A,
+            auto const& B,
+            auto& C) requires(std::same_as<T_Type, float> || std::same_as<T_Type, double>)
+        {
+            cublasHandle_t handle;
+            cublasStatus_t stat = cublasCreate(&handle);
+            cublasSetStream(handle, queue.getNativeHandle());
+
+            int M = A.getExtents().y();
+            int N = A.getExtents().x();
+            int K = B.getExtents().x();
+            T_Type alpha = 1;
+            T_Type beta = 0;
+
+            auto const callSgemmCUBlas = [&]()
+            {
+                constexpr auto cudaType = CudaDataType<T_Type>::value;
+                stat = cublasGemmEx(
+                    handle,
+                    CUBLAS_OP_N,
+                    CUBLAS_OP_N,
+                    K,
+                    M,
+                    N,
+                    &alpha,
+                    B.data(),
+                    cudaType,
+                    B.getPitches().y() / sizeof(T_Type),
+                    A.data(),
+                    cudaType,
+                    A.getPitches().y() / sizeof(T_Type),
+                    &beta,
+                    C.data(),
+                    cudaType,
+                    C.getPitches().y() / sizeof(T_Type),
+                    cudaType,
+                    CUBLAS_GEMM_DEFAULT);
+            };
+
+            if(stat != CUBLAS_STATUS_SUCCESS)
+            {
+                throw std::invalid_argument(
+                    "cublasSgemm failed with error code: " + std::to_string(static_cast<int>(stat)));
+            }
+
+            // warmup call CUBlas, result is used for validation
+            callSgemmCUBlas();
+        }
+    } // namespace internal
+} // namespace alpaka::nn::onHost
+
+#endif

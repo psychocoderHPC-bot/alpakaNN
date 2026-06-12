@@ -5,10 +5,9 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onHost/matrix/gemm.hpp>
 #include <alpaka/nn/onHost/ops/elementwise.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 namespace alpaka::nn::onHost::nn
 {

@@ -5,13 +5,12 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onHost/inference/kv_cache.hpp>
 #include <alpaka/nn/onHost/inference/transformer_block.hpp>
 #include <alpaka/nn/onHost/matrix/gemm.hpp>
 #include <alpaka/nn/onHost/nn/embedding.hpp>
 #include <alpaka/nn/onHost/nn/rms_norm.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -46,7 +45,8 @@ namespace alpaka::nn::onHost::model
 
         ModelConfig config;
         TMatrixBuffer embedding;
-        std::vector<alpaka::nn::onHost::inference::TransformerBlockWeights<T_Type, TVectorBuffer, TMatrixBuffer>> layers;
+        std::vector<alpaka::nn::onHost::inference::TransformerBlockWeights<T_Type, TVectorBuffer, TMatrixBuffer>>
+            layers;
         TVectorBuffer finalNorm;
         TMatrixBuffer lmHead;
     };

@@ -5,10 +5,9 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onAcc/internal/nn/softmax.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 #include <stdexcept>
@@ -35,7 +34,11 @@ namespace alpaka::nn::onHost::nn
             throw std::invalid_argument{"maskedSoftmax shape mismatch."};
         queue.enqueue(
             alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, output.getExtents()),
-            alpaka::KernelBundle{alpaka::nn::onAcc::internal::nn::MaskedSoftmaxKernel<T_Type>{axis}, output, input, mask});
+            alpaka::KernelBundle{
+                alpaka::nn::onAcc::internal::nn::MaskedSoftmaxKernel<T_Type>{axis},
+                output,
+                input,
+                mask});
     }
 
     template<typename T_Type>

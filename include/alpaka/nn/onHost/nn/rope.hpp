@@ -5,12 +5,11 @@
 
 #pragma once
 
+#include <alpaka/alpaka.hpp>
 #include <alpaka/nn/nn/rope.hpp>
 #include <alpaka/nn/onAcc/internal/nn/rope.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
 #include <alpaka/nn/onHost/ops/elementwise.hpp>
-
-#include <alpaka/alpaka.hpp>
 
 #include <cstdint>
 #include <stdexcept>
@@ -20,7 +19,12 @@ namespace alpaka::nn::onHost::nn
 {
     namespace internal
     {
-        inline void validateRopeShape(auto const& in, auto const& out, auto const& cosTable, auto const& sinTable, uint32_t positionOffset)
+        inline void validateRopeShape(
+            auto const& in,
+            auto const& out,
+            auto const& cosTable,
+            auto const& sinTable,
+            uint32_t positionOffset)
         {
             if(in.getExtents() != out.getExtents())
                 throw std::invalid_argument{"rope shape mismatch."};
