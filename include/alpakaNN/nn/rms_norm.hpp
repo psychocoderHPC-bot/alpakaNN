@@ -27,7 +27,8 @@ namespace alpakaNN::nn
                 auto const hiddenAxis = extents.dim() - 1u;
                 auto const hiddenExtent = static_cast<uint32_t>(extents[hiddenAxis]);
 
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{extents}))
+                for(auto idx :
+                    alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{extents}))
                 {
                     auto reduceIdx = idx;
                     T_Type sumSquares{};
@@ -50,7 +51,8 @@ namespace alpakaNN::nn
     {
         if(input.getExtents() != output.getExtents())
             throw std::invalid_argument{"rmsNorm shape mismatch."};
-        if(weight.getExtents().dim() != 1u || weight.getExtents()[0] != input.getExtents()[input.getExtents().dim() - 1u])
+        if(weight.getExtents().dim() != 1u
+           || weight.getExtents()[0] != input.getExtents()[input.getExtents().dim() - 1u])
             throw std::invalid_argument{"rmsNorm expects a 1D weight matching the last axis."};
 
         queue.enqueue(

@@ -19,10 +19,21 @@ namespace alpakaNN::nn
     }
 
     template<typename T_Type>
-    void mlp(auto& queue, auto exec, auto const& input, auto const& Wgate, auto const& Wup, auto const& Wdown, auto& output)
+    void mlp(
+        auto& queue,
+        auto exec,
+        auto const& input,
+        auto const& Wgate,
+        auto const& Wup,
+        auto const& Wdown,
+        auto& output)
     {
-        auto gate = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{input.getExtents()[0], Wgate.getExtents()[1]});
-        auto up = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{input.getExtents()[0], Wup.getExtents()[1]});
+        auto gate = alpaka::onHost::alloc<T_Type>(
+            queue.getDevice(),
+            alpaka::Vec{input.getExtents()[0], Wgate.getExtents()[1]});
+        auto up = alpaka::onHost::alloc<T_Type>(
+            queue.getDevice(),
+            alpaka::Vec{input.getExtents()[0], Wup.getExtents()[1]});
         auto hidden = alpaka::onHost::alloc<T_Type>(queue.getDevice(), gate.getExtents());
 
         linear<T_Type>(queue, exec, input, Wgate, gate);

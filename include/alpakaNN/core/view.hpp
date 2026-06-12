@@ -5,9 +5,9 @@
 
 #pragma once
 
-#include <alpakaNN/core/shape.hpp>
-
 #include <alpaka/alpaka.hpp>
+
+#include <alpakaNN/core/shape.hpp>
 
 #include <array>
 #include <cstddef>

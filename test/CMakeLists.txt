@@ -36,7 +36,7 @@ function(alpakaNN_add_test_target target_prefix folder)
     endforeach()
 endfunction()
 
-alpakaNN_add_test_target(unit_test_ ${CMAKE_CURRENT_SOURCE_DIR}/unit/**)
+alpakann_add_test_target(unit_test_ ${CMAKE_CURRENT_SOURCE_DIR}/unit/**)
 
 # Download tiny LLaMA model for testing during build
 set(TINY_LLAMA_DIR ${CMAKE_BINARY_DIR}/testdata/tiny_llama)
@@ -58,29 +58,21 @@ add_compile_definitions(TINY_LLAMA_MODEL_PATH="${TINY_LLAMA_DIR}/tiny_llama.bin"
 add_test(
     NAME tokenizer_helper_roundtrip
     COMMAND
-        ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/test/integration/tokenizer_helper_roundtrip.py
-        ${CMAKE_SOURCE_DIR}/tools/llama_tokenizer.py
-        ${TINY_LLAMA_DIR}
+        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/integration/tokenizer_helper_roundtrip.py
+        ${CMAKE_SOURCE_DIR}/tools/llama_tokenizer.py ${TINY_LLAMA_DIR}
 )
 
 add_test(
     NAME chat_cli_selftest
     COMMAND
-        ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py
-        selftest
-        $<TARGET_FILE:ChatCli>
+        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py selftest $<TARGET_FILE:ChatCli>
         ${TINY_LLAMA_DIR}
 )
 
 add_test(
     NAME chat_cli_interactive
     COMMAND
-        ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py
-        interactive
-        $<TARGET_FILE:ChatCli>
+        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py interactive $<TARGET_FILE:ChatCli>
         ${TINY_LLAMA_DIR}
 )
 
@@ -88,11 +80,7 @@ if(alpakaNN_ENABLE_TINYLLAMA_LARGE_TESTS)
     add_test(
         NAME chat_cli_tinyllama_chat
         COMMAND
-            ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py
-            tinyllama-chat
-            $<TARGET_FILE:ChatCli>
-            ${TINY_LLAMA_DIR}
-            ${CMAKE_SOURCE_DIR}
+            ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py tinyllama-chat
+            $<TARGET_FILE:ChatCli> ${TINY_LLAMA_DIR} ${CMAKE_SOURCE_DIR}
     )
 endif()

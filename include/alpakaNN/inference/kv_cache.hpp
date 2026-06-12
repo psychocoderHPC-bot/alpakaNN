@@ -28,7 +28,13 @@ namespace alpakaNN::inference
         std::vector<uint32_t> lengths;
 
         template<typename T_Device>
-        KvCache(T_Device const& device, uint32_t numLayers, uint32_t batch, uint32_t kvHeads, uint32_t context, uint32_t dim)
+        KvCache(
+            T_Device const& device,
+            uint32_t numLayers,
+            uint32_t batch,
+            uint32_t kvHeads,
+            uint32_t context,
+            uint32_t dim)
             : layers(numLayers)
             , batchSize(batch)
             , numKeyValueHeads(kvHeads)
@@ -64,7 +70,14 @@ namespace alpakaNN::inference
             lengths.at(layer * batchSize + batch) = value;
         }
 
-        void append(auto& queue, auto exec, uint32_t layer, uint32_t batch, uint32_t token, auto const& keyToken, auto const& valueToken)
+        void append(
+            auto& queue,
+            auto exec,
+            uint32_t layer,
+            uint32_t batch,
+            uint32_t token,
+            auto const& keyToken,
+            auto const& valueToken)
         {
             alpaka::unused(exec);
             if(keyToken.getExtents() != valueToken.getExtents())
@@ -101,7 +114,13 @@ namespace alpakaNN::inference
     };
 
     template<typename T_Type, typename T_Device>
-    auto makeKvCache(T_Device const& device, uint32_t layers, uint32_t batchSize, uint32_t numKeyValueHeads, uint32_t maxContext, uint32_t headDim)
+    auto makeKvCache(
+        T_Device const& device,
+        uint32_t layers,
+        uint32_t batchSize,
+        uint32_t numKeyValueHeads,
+        uint32_t maxContext,
+        uint32_t headDim)
     {
         using Buffer = decltype(alpaka::onHost::alloc<T_Type>(device, alpaka::Vec{1u, 1u, 1u, 1u}));
         return KvCache<T_Type, Buffer>{device, layers, batchSize, numKeyValueHeads, maxContext, headDim};

@@ -115,7 +115,9 @@ namespace alpakaNN::model
         auto load2D = [&](uint32_t rows, uint32_t cols)
         {
             auto host = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{rows, cols});
-            input.read(reinterpret_cast<char*>(host.data()), static_cast<std::streamsize>(rows * cols * sizeof(T_Type)));
+            input.read(
+                reinterpret_cast<char*>(host.data()),
+                static_cast<std::streamsize>(rows * cols * sizeof(T_Type)));
             if(!input)
                 throw std::runtime_error{"Unexpected end of file while reading 2D tensor."};
             auto dev = alpaka::onHost::allocLike(device, host);
@@ -130,20 +132,21 @@ namespace alpakaNN::model
         for(uint32_t layer = 0u; layer < cfg.numLayers; ++layer)
         {
             auto const headDim = cfg.hiddenSize / cfg.numHeads;
-            layers.push_back(alpakaNN::inference::TransformerBlockWeights<T_Type, VectorBuffer, MatrixBuffer>{
-                load1D(cfg.hiddenSize),
-                load1D(cfg.hiddenSize),
-                load2D(cfg.hiddenSize, cfg.hiddenSize),
-                load2D(cfg.hiddenSize, cfg.numKeyValueHeads * headDim),
-                load2D(cfg.hiddenSize, cfg.numKeyValueHeads * headDim),
-                load2D(cfg.hiddenSize, cfg.hiddenSize),
-                load2D(cfg.hiddenSize, cfg.intermediateSize),
-                load2D(cfg.hiddenSize, cfg.intermediateSize),
-                load2D(cfg.intermediateSize, cfg.hiddenSize),
-                cfg.numHeads,
-                cfg.numKeyValueHeads,
-                headDim,
-                cfg.rmsNormEpsilon});
+            layers.push_back(
+                alpakaNN::inference::TransformerBlockWeights<T_Type, VectorBuffer, MatrixBuffer>{
+                    load1D(cfg.hiddenSize),
+                    load1D(cfg.hiddenSize),
+                    load2D(cfg.hiddenSize, cfg.hiddenSize),
+                    load2D(cfg.hiddenSize, cfg.numKeyValueHeads * headDim),
+                    load2D(cfg.hiddenSize, cfg.numKeyValueHeads * headDim),
+                    load2D(cfg.hiddenSize, cfg.hiddenSize),
+                    load2D(cfg.hiddenSize, cfg.intermediateSize),
+                    load2D(cfg.hiddenSize, cfg.intermediateSize),
+                    load2D(cfg.intermediateSize, cfg.hiddenSize),
+                    cfg.numHeads,
+                    cfg.numKeyValueHeads,
+                    headDim,
+                    cfg.rmsNormEpsilon});
         }
         auto finalNorm = load1D(cfg.hiddenSize);
         auto lmHead = load2D(cfg.hiddenSize, cfg.vocabSize);
@@ -191,7 +194,9 @@ namespace alpakaNN::model
         auto devTokens = alpaka::onHost::allocLike(queue.getDevice(), hostTokens);
         alpaka::onHost::memcpy(queue, devTokens, hostTokens);
 
-        auto hidden = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.hiddenSize});
+        auto hidden = alpaka::onHost::alloc<T_Type>(
+            queue.getDevice(),
+            alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.hiddenSize});
         nn::embeddingLookup<T_Type>(queue, exec, devTokens, model.embedding, hidden);
 
         auto ropeTables = makeRopeTables<T_Type>(
@@ -217,8 +222,16 @@ namespace alpakaNN::model
         }
 
         auto norm = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
-        nn::rmsNorm<T_Type>(queue, exec, hidden, model.finalNorm, norm, static_cast<T_Type>(model.config.rmsNormEpsilon));
-        auto logits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.vocabSize});
+        nn::rmsNorm<T_Type>(
+            queue,
+            exec,
+            hidden,
+            model.finalNorm,
+            norm,
+            static_cast<T_Type>(model.config.rmsNormEpsilon));
+        auto logits = alpaka::onHost::alloc<T_Type>(
+            queue.getDevice(),
+            alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.vocabSize});
         alpakaNN::gemm<T_Type>(queue, exec, norm, model.lmHead, logits);
         auto lastLogits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.vocabSize});
         alpaka::onHost::memcpy(
@@ -282,7 +295,13 @@ namespace alpakaNN::model
         }
 
         auto norm = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
-        nn::rmsNorm<T_Type>(queue, exec, hidden, model.finalNorm, norm, static_cast<T_Type>(model.config.rmsNormEpsilon));
+        nn::rmsNorm<T_Type>(
+            queue,
+            exec,
+            hidden,
+            model.finalNorm,
+            norm,
+            static_cast<T_Type>(model.config.rmsNormEpsilon));
         auto logits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.vocabSize});
         alpakaNN::gemm<T_Type>(queue, exec, norm, model.lmHead, logits);
         alpaka::onHost::wait(queue);

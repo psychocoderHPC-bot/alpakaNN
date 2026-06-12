@@ -37,7 +37,10 @@ namespace alpakaNN::nn
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto input) const
             {
                 auto const axisExtent = static_cast<uint32_t>(input.getExtents()[axis]);
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                 {
                     auto probe = idx;
                     T_Type maxValue = std::numeric_limits<T_Type>::lowest();
@@ -81,7 +84,10 @@ namespace alpakaNN::nn
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto input, auto mask) const
             {
                 auto const axisExtent = static_cast<uint32_t>(input.getExtents()[axis]);
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                 {
                     auto probe = idx;
                     T_Type maxValue = std::numeric_limits<T_Type>::lowest();
@@ -131,7 +137,14 @@ namespace alpakaNN::nn
     }
 
     template<typename T_Type>
-    void causalSoftmax(auto& queue, auto exec, auto const& input, auto& output, uint32_t axis, uint32_t queryAxis, uint32_t keyAxis)
+    void causalSoftmax(
+        auto& queue,
+        auto exec,
+        auto const& input,
+        auto& output,
+        uint32_t axis,
+        uint32_t queryAxis,
+        uint32_t keyAxis)
     {
         if(input.getExtents() != output.getExtents())
             throw std::invalid_argument{"causalSoftmax shape mismatch."};

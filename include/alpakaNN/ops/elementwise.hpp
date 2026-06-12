@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "alpakaNN/detail/launch.hpp"
 #include "alpakaNN/core/shape.hpp"
+#include "alpakaNN/detail/launch.hpp"
 
 #include <alpaka/alpaka.hpp>
 
@@ -179,7 +179,10 @@ namespace alpakaNN::ops
 
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto in) const
             {
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                     out[idx] = op(in[idx]);
             }
         };
@@ -191,7 +194,10 @@ namespace alpakaNN::ops
 
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto lhs, auto rhs) const
             {
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                     out[idx] = op(lhs[idx], rhs[idx]);
             }
         };
@@ -203,7 +209,10 @@ namespace alpakaNN::ops
 
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out) const
             {
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                     out[idx] = value;
             }
         };
@@ -214,7 +223,10 @@ namespace alpakaNN::ops
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto input, auto bias) const
             {
                 auto const axis = out.getExtents().dim() - 1u;
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                     out[idx] = input[idx] + bias[alpaka::Vec{idx[axis]}];
             }
         };
@@ -257,11 +269,19 @@ namespace alpakaNN::ops
             queue,
             exec,
             out.getExtents(),
-            alpaka::KernelBundle{detail::UnaryKernel{detail::IdentityOp<typename std::remove_reference_t<decltype(out)>::value_type>{}}, out, in});
+            alpaka::KernelBundle{
+                detail::UnaryKernel{detail::IdentityOp<typename std::remove_reference_t<decltype(out)>::value_type>{}},
+                out,
+                in});
     }
 
     template<typename T_Op>
-    void unaryOp(auto& queue, auto exec, alpaka::concepts::IMdSpan auto const& in, alpaka::concepts::IMdSpan auto& out, T_Op op)
+    void unaryOp(
+        auto& queue,
+        auto exec,
+        alpaka::concepts::IMdSpan auto const& in,
+        alpaka::concepts::IMdSpan auto& out,
+        T_Op op)
     {
         detail::requireSameShape(in, out, "unaryOp");
         detail::enqueue(queue, exec, out.getExtents(), alpaka::KernelBundle{detail::UnaryKernel<T_Op>{op}, out, in});
@@ -278,7 +298,11 @@ namespace alpakaNN::ops
     {
         detail::requireSameShape(lhs, rhs, "binaryOp");
         detail::requireSameShape(lhs, out, "binaryOp");
-        detail::enqueue(queue, exec, out.getExtents(), alpaka::KernelBundle{detail::BinaryKernel<T_Op>{op}, out, lhs, rhs});
+        detail::enqueue(
+            queue,
+            exec,
+            out.getExtents(),
+            alpaka::KernelBundle{detail::BinaryKernel<T_Op>{op}, out, lhs, rhs});
     }
 
     template<typename T_Type>
@@ -321,7 +345,15 @@ namespace alpakaNN::ops
     {
         detail::requireSameShape(input, out, "biasAdd");
         detail::requireBiasShape(input, bias);
-        detail::enqueue(queue, exec, out.getExtents(), alpaka::KernelBundle{detail::BiasAddKernel<typename std::remove_reference_t<decltype(bias)>::value_type>{}, out, input, bias});
+        detail::enqueue(
+            queue,
+            exec,
+            out.getExtents(),
+            alpaka::KernelBundle{
+                detail::BiasAddKernel<typename std::remove_reference_t<decltype(bias)>::value_type>{},
+                out,
+                input,
+                bias});
     }
 
     template<typename T_Out>

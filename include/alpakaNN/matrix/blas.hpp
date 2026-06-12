@@ -5,10 +5,10 @@
 
 #pragma once
 
-#include <alpakaNN/core/shape.hpp>
-
 #include <alpaka/alpaka.hpp>
 #include <alpaka/fn.hpp>
+
+#include <alpakaNN/core/shape.hpp>
 
 #include <cstdint>
 #include <limits>

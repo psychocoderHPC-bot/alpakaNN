@@ -21,7 +21,10 @@ namespace alpakaNN::nn
         {
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto tokenIds, auto embedding) const
             {
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                 {
                     auto const token = tokenIds[alpaka::Vec{idx[0]}];
                     out[idx] = embedding[alpaka::Vec{token, idx[1]}];

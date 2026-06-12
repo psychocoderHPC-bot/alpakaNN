@@ -40,7 +40,10 @@ namespace alpakaNN::nn
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto in, auto cosTable, auto sinTable) const
             {
                 auto const headDimAxis = out.getExtents().dim() - 1u;
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                 {
                     auto const component = static_cast<uint32_t>(idx[headDimAxis]);
                     auto const pair = component / 2u;
@@ -52,12 +55,18 @@ namespace alpakaNN::nn
                     auto const position = positionOffset + static_cast<uint32_t>(tokenIndex(out, idx));
                     auto const cosValue = cosTable[alpaka::Vec{position, pair}];
                     auto const sinValue = sinTable[alpaka::Vec{position, pair}];
-                    out[idx] = (component % 2u == 0u) ? (even * cosValue - odd * sinValue) : (even * sinValue + odd * cosValue);
+                    out[idx] = (component % 2u == 0u) ? (even * cosValue - odd * sinValue)
+                                                      : (even * sinValue + odd * cosValue);
                 }
             }
         };
 
-        inline void validateRopeShape(auto const& in, auto const& out, auto const& cosTable, auto const& sinTable, uint32_t positionOffset)
+        inline void validateRopeShape(
+            auto const& in,
+            auto const& out,
+            auto const& cosTable,
+            auto const& sinTable,
+            uint32_t positionOffset)
         {
             if(in.getExtents() != out.getExtents())
                 throw std::invalid_argument{"rope shape mismatch."};
@@ -70,7 +79,8 @@ namespace alpakaNN::nn
             if(static_cast<uint32_t>(cosTable.getExtents()[1]) != headDim / 2u)
                 throw std::invalid_argument{"rope table pair count mismatch."};
             auto const tokenAxis = in.getExtents().dim() == 4u ? 1u : 0u;
-            if(positionOffset + static_cast<uint32_t>(in.getExtents()[tokenAxis]) > static_cast<uint32_t>(cosTable.getExtents()[0]))
+            if(positionOffset + static_cast<uint32_t>(in.getExtents()[tokenAxis])
+               > static_cast<uint32_t>(cosTable.getExtents()[0]))
                 throw std::invalid_argument{"rope table does not cover requested positions."};
         }
     } // namespace detail
@@ -124,7 +134,9 @@ namespace alpakaNN::nn
         RopeLayout layout = RopeLayout::BTHD,
         uint32_t positionOffset = 0u)
     {
-        auto tmp = alpaka::onHost::alloc<typename std::remove_reference_t<decltype(tensor)>::value_type>(queue.getDevice(), tensor.getExtents());
+        auto tmp = alpaka::onHost::alloc<typename std::remove_reference_t<decltype(tensor)>::value_type>(
+            queue.getDevice(),
+            tensor.getExtents());
         rope<T_Type>(queue, exec, tensor, cosTable, sinTable, tmp, layout, positionOffset);
         alpakaNN::ops::copy(queue, exec, tmp, tensor);
         alpaka::onHost::wait(queue);

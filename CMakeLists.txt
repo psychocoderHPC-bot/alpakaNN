@@ -32,10 +32,7 @@ set(alpaka_EXAMPLES OFF CACHE BOOL "Disable alpaka3 examples." FORCE)
 set(alpaka_HEADERCHECKS OFF CACHE BOOL "Disable alpaka3 header checks." FORCE)
 
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/alpaka3/CMakeLists.txt")
-    message(
-        FATAL_ERROR
-        "alpaka3 is missing. Initialize submodules first: git submodule update --init --recursive"
-    )
+    message(FATAL_ERROR "alpaka3 is missing. Initialize submodules first: git submodule update --init --recursive")
 endif()
 
 add_subdirectory(extern/alpaka3)
@@ -54,10 +51,7 @@ if(alpakaNN_OPENBLAS)
         set(TARGET CORE2 CACHE STRING "OpenBLAS: conservative x86_64 target" FORCE)
     endif()
 
-    FetchContent_Declare(
-        openblas
-        URL https://github.com/OpenMathLib/OpenBLAS/archive/refs/tags/v0.3.30.tar.gz
-    )
+    FetchContent_Declare(openblas URL https://github.com/OpenMathLib/OpenBLAS/archive/refs/tags/v0.3.30.tar.gz)
     FetchContent_MakeAvailable(openblas)
 endif()
 
@@ -68,18 +62,15 @@ target_compile_features(alpakaNN INTERFACE cxx_std_20)
 target_compile_definitions(alpakaNN INTERFACE ALPAKANN_OPENBLAS_ENABLED=$<BOOL:${alpakaNN_OPENBLAS}>)
 target_include_directories(
     alpakaNN
-    INTERFACE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(alpakaNN INTERFACE $<BUILD_INTERFACE:alpaka::alpaka>)
 if(alpakaNN_OPENBLAS)
     target_link_libraries(alpakaNN INTERFACE openblas)
     target_include_directories(
         alpakaNN
-        INTERFACE
-            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated>
-            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>)
+        INTERFACE $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated> $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+    )
 endif()
 
 add_subdirectory(example/cli)
@@ -92,16 +83,9 @@ endif()
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(
-    TARGETS alpakaNN
-    EXPORT alpakaNNTargets
-)
+install(TARGETS alpakaNN EXPORT alpakaNNTargets)
 
-install(
-    EXPORT alpakaNNTargets
-    NAMESPACE alpakaNN::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/alpakaNN
-)
+install(EXPORT alpakaNNTargets NAMESPACE alpakaNN:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/alpakaNN)
 
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/alpakaNNConfigVersion.cmake"
@@ -116,8 +100,6 @@ configure_package_config_file(
 )
 
 install(
-    FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/alpakaNNConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/alpakaNNConfigVersion.cmake"
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/alpakaNNConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/alpakaNNConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/alpakaNN
 )

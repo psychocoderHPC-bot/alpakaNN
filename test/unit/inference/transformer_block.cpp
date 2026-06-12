@@ -6,7 +6,6 @@
 #include "../test.hpp"
 
 #include <alpakaNN/alpakaNN.hpp>
-
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -14,7 +13,10 @@
 
 using TestApis = alpakaNN::test::TestApis;
 
-TEMPLATE_LIST_TEST_CASE("transformer block runs end to end on tiny dimensions", "[inference][transformer-block]", TestApis)
+TEMPLATE_LIST_TEST_CASE(
+    "transformer block runs end to end on tiny dimensions",
+    "[inference][transformer-block]",
+    TestApis)
 {
     auto cfg = TestType::makeDict();
     auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
@@ -95,7 +97,19 @@ TEMPLATE_LIST_TEST_CASE("transformer block runs end to end on tiny dimensions", 
     alpaka::onHost::memcpy(queue, devSin, sinTable);
 
     alpakaNN::inference::TransformerBlockWeights<float, decltype(devRms1), decltype(devWq)> weights{
-        devRms1, devRms2, devWq, devWk, devWv, devWo, devWgate, devWup, devWdown, heads, kvHeads, headDim, 1.0e-5f};
+        devRms1,
+        devRms2,
+        devWq,
+        devWk,
+        devWv,
+        devWo,
+        devWgate,
+        devWup,
+        devWdown,
+        heads,
+        kvHeads,
+        headDim,
+        1.0e-5f};
     auto cache = alpakaNN::inference::makeKvCache<float>(device, 1u, 1u, kvHeads, tokens, headDim);
     alpakaNN::inference::transformerBlock<float>(queue, exec, devInput, weights, cache, 0u, devCos, devSin, devOutput);
     alpaka::onHost::memcpy(queue, input, devOutput);

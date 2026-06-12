@@ -33,7 +33,12 @@ namespace alpakaNN::inference
     }
 
     template<typename T_Model>
-    std::vector<uint32_t> generateGreedy(auto& queue, auto exec, T_Model const& model, std::vector<uint32_t> tokens, uint32_t maxNewTokens)
+    std::vector<uint32_t> generateGreedy(
+        auto& queue,
+        auto exec,
+        T_Model const& model,
+        std::vector<uint32_t> tokens,
+        uint32_t maxNewTokens)
     {
         if(maxNewTokens == 0u)
             return tokens;

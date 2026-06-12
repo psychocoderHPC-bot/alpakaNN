@@ -6,7 +6,6 @@
 #include "../test.hpp"
 
 #include <alpakaNN/alpakaNN.hpp>
-
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -106,9 +105,23 @@ TEMPLATE_LIST_TEST_CASE("attention maps grouped query heads onto fewer kv heads"
     alpaka::onHost::memcpy(queue, devK, k);
     alpaka::onHost::memcpy(queue, devV, v);
 
-    alpakaNN::nn::attentionScores<float>(queue, exec, devQ, devK, devScores, 2u, alpakaNN::nn::AttentionKvLayout::BTHD);
+    alpakaNN::nn::attentionScores<float>(
+        queue,
+        exec,
+        devQ,
+        devK,
+        devScores,
+        2u,
+        alpakaNN::nn::AttentionKvLayout::BTHD);
     alpakaNN::nn::softmax<float>(queue, exec, devScores, devProbs, 3u);
-    alpakaNN::nn::attentionApply<float>(queue, exec, devProbs, devV, devOut, 2u, alpakaNN::nn::AttentionKvLayout::BTHD);
+    alpakaNN::nn::attentionApply<float>(
+        queue,
+        exec,
+        devProbs,
+        devV,
+        devOut,
+        2u,
+        alpakaNN::nn::AttentionKvLayout::BTHD);
     alpaka::onHost::memcpy(queue, scores, devScores);
     alpaka::onHost::memcpy(queue, out, devOut);
     alpaka::onHost::wait(queue);

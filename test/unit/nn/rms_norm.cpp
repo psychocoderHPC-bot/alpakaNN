@@ -6,7 +6,6 @@
 #include "../test.hpp"
 
 #include <alpakaNN/alpakaNN.hpp>
-
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -49,6 +48,8 @@ TEMPLATE_LIST_TEST_CASE("rmsNorm matches reference", "[nn][rmsnorm]", TestApis)
             sumSquares += input[alpaka::Vec{row, col}] * input[alpaka::Vec{row, col}];
         auto const invRms = 1.0f / std::sqrt(sumSquares / 4.0f + 1.0e-5f);
         for(uint32_t col = 0u; col < 4u; ++col)
-            alpakaNN::test::checkValue(output[alpaka::Vec{row, col}], input[alpaka::Vec{row, col}] * invRms * weight[alpaka::Vec{col}]);
+            alpakaNN::test::checkValue(
+                output[alpaka::Vec{row, col}],
+                input[alpaka::Vec{row, col}] * invRms * weight[alpaka::Vec{col}]);
     }
 }

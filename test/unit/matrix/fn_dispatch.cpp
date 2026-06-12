@@ -48,7 +48,10 @@ namespace
 
 using TestApis = alpakaNN::test::TestApis;
 
-TEMPLATE_LIST_TEST_CASE("alpaka fn dispatch selects host specialization when OpenBLAS is enabled", "[matrix][fn]", TestApis)
+TEMPLATE_LIST_TEST_CASE(
+    "alpaka fn dispatch selects host specialization when OpenBLAS is enabled",
+    "[matrix][fn]",
+    TestApis)
 {
     auto cfg = TestType::makeDict();
     auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);

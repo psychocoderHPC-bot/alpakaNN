@@ -5,9 +5,9 @@
 
 #pragma once
 
-#include <alpakaNN/core/layout.hpp>
-
 #include <alpaka/alpaka.hpp>
+
+#include <alpakaNN/core/layout.hpp>
 
 #include <cstddef>
 #include <cstdint>

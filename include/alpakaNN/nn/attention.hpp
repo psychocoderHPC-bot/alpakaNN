@@ -6,8 +6,8 @@
 #pragma once
 
 #include "alpakaNN/matrix/gemm.hpp"
-#include "alpakaNN/ops/elementwise.hpp"
 #include "alpakaNN/nn/softmax.hpp"
+#include "alpakaNN/ops/elementwise.hpp"
 
 #include <alpaka/alpaka.hpp>
 
@@ -32,7 +32,10 @@ namespace alpakaNN::nn
 
             ALPAKA_FN_ACC void operator()(auto const& acc, auto scores, auto q, auto k) const
             {
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{scores.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{scores.getExtents()}))
                 {
                     T_Type sum{};
                     auto const queryHead = static_cast<uint32_t>(idx[1]);
@@ -40,8 +43,8 @@ namespace alpakaNN::nn
                     for(uint32_t d = 0u; d < q.getExtents()[3]; ++d)
                     {
                         auto const key = kvLayout == AttentionKvLayout::BTHD
-                            ? k[alpaka::Vec{idx[0], idx[3], kvHead, d}]
-                            : k[alpaka::Vec{idx[0], kvHead, idx[3], d}];
+                                             ? k[alpaka::Vec{idx[0], idx[3], kvHead, d}]
+                                             : k[alpaka::Vec{idx[0], kvHead, idx[3], d}];
                         sum += q[alpaka::Vec{idx[0], idx[2], queryHead, d}] * key;
                     }
                     scores[idx] = sum;
@@ -57,7 +60,10 @@ namespace alpakaNN::nn
 
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto probs, auto values) const
             {
-                for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                 {
                     T_Type sum{};
                     auto const queryHead = static_cast<uint32_t>(idx[2]);
@@ -65,8 +71,8 @@ namespace alpakaNN::nn
                     for(uint32_t key = 0u; key < probs.getExtents()[3]; ++key)
                     {
                         auto const value = kvLayout == AttentionKvLayout::BTHD
-                            ? values[alpaka::Vec{idx[0], key, kvHead, idx[3]}]
-                            : values[alpaka::Vec{idx[0], kvHead, key, idx[3]}];
+                                               ? values[alpaka::Vec{idx[0], key, kvHead, idx[3]}]
+                                               : values[alpaka::Vec{idx[0], kvHead, key, idx[3]}];
                         sum += probs[alpaka::Vec{idx[0], queryHead, idx[1], key}] * value;
                     }
                     out[idx] = sum;
@@ -76,7 +82,16 @@ namespace alpakaNN::nn
     } // namespace detail
 
     template<typename T_Type>
-    void qkvProjection(auto& queue, auto exec, auto const& input, auto const& Wq, auto const& Wk, auto const& Wv, auto& Q, auto& K, auto& V)
+    void qkvProjection(
+        auto& queue,
+        auto exec,
+        auto const& input,
+        auto const& Wq,
+        auto const& Wk,
+        auto const& Wv,
+        auto& Q,
+        auto& K,
+        auto& V)
     {
         alpakaNN::gemm<T_Type>(queue, exec, input, Wq, Q);
         alpakaNN::gemm<T_Type>(queue, exec, input, Wk, K);
@@ -95,11 +110,7 @@ namespace alpakaNN::nn
     {
         queue.enqueue(
             alpakaNN::detail::makeFrameSpec(queue.getDevice(), exec, scores.getExtents()),
-            alpaka::KernelBundle{
-                detail::AttentionScoresKernel<T_Type>{queriesPerKvGroup, kvLayout},
-                scores,
-                Q,
-                K});
+            alpaka::KernelBundle{detail::AttentionScoresKernel<T_Type>{queriesPerKvGroup, kvLayout}, scores, Q, K});
     }
 
     template<typename T_Type>

@@ -4,7 +4,11 @@
  */
 
 #include <alpaka/alpaka.hpp>
+
 #include <alpakaNN/alpakaNN.hpp>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -14,10 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <tuple>
-#include <unistd.h>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -88,9 +89,7 @@ namespace
         std::ifstream input(path);
         if(!input)
             throw std::runtime_error("Failed to open file: " + path.string());
-        return std::string(
-            (std::istreambuf_iterator<char>(input)),
-            std::istreambuf_iterator<char>());
+        return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     }
 
     void writeTextFile(fs::path const& path, std::string const& content)
@@ -140,11 +139,21 @@ namespace
         {
             switch(ch)
             {
-            case '\\': out += "\\\\"; break;
-            case '"': out += "\\\""; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
             default:
                 out += ch;
                 break;
@@ -163,15 +172,21 @@ namespace
         return output;
     }
 
-    std::string runTokenizerHelper(fs::path const& modelDir, std::string_view mode, std::string const& payload, bool addBos = false, bool addEos = false)
+    std::string runTokenizerHelper(
+        fs::path const& modelDir,
+        std::string_view mode,
+        std::string const& payload,
+        bool addBos = false,
+        bool addEos = false)
     {
-        auto const tmpPath = fs::temp_directory_path() /
-            ("alpakaNN-tokenizer-" + std::to_string(::getpid()) + "-" + std::to_string(std::rand()) + ".txt");
+        auto const tmpPath
+            = fs::temp_directory_path()
+              / ("alpakaNN-tokenizer-" + std::to_string(::getpid()) + "-" + std::to_string(std::rand()) + ".txt");
         writeTextFile(tmpPath, payload);
 
         auto const helperPath = repoRoot() / "tools" / "llama_tokenizer.py";
-        std::string command = "python3 " + shellQuote(helperPath.string()) + " " + std::string(mode) + " " +
-            shellQuote(modelDir.string());
+        std::string command = "python3 " + shellQuote(helperPath.string()) + " " + std::string(mode) + " "
+                              + shellQuote(modelDir.string());
         if(addBos)
             command += " --bos";
         if(addEos)
@@ -249,8 +264,7 @@ namespace
 
     struct PythonTokenizer
     {
-        explicit PythonTokenizer(fs::path modelDirectory)
-            : modelDir(std::move(modelDirectory))
+        explicit PythonTokenizer(fs::path modelDirectory) : modelDir(std::move(modelDirectory))
         {
         }
 
@@ -280,10 +294,10 @@ namespace
             if(!hasTemplate)
                 return ChatTemplateSupport::none;
             auto const isTinyLlamaTemplate = text.find("message['role'] == 'user'") != std::string::npos
-                && text.find("message['role'] == 'assistant'") != std::string::npos
-                && text.find("loop.last and add_generation_prompt") != std::string::npos
-                && text.find("<|user|>") != std::string::npos
-                && text.find("<|assistant|>") != std::string::npos;
+                                             && text.find("message['role'] == 'assistant'") != std::string::npos
+                                             && text.find("loop.last and add_generation_prompt") != std::string::npos
+                                             && text.find("<|user|>") != std::string::npos
+                                             && text.find("<|assistant|>") != std::string::npos;
             return isTinyLlamaTemplate ? ChatTemplateSupport::tinyLlama : ChatTemplateSupport::unsupported;
         }
 
@@ -403,8 +417,8 @@ namespace
         auto const modelDir = repoRoot() / MODEL_DIR / modelName;
         fs::create_directories(modelDir);
         auto const downloader = repoRoot() / "tools" / "download_tiny_llama.py";
-        std::string command = "python3 " + shellQuote(downloader.string()) + " " + shellQuote(modelName) + " " +
-            shellQuote(modelDir.string());
+        std::string command = "python3 " + shellQuote(downloader.string()) + " " + shellQuote(modelName) + " "
+                              + shellQuote(modelDir.string());
         auto const rc = std::system(command.c_str());
         if(rc != 0)
             throw std::runtime_error("Failed to download model: " + modelName);
@@ -489,7 +503,9 @@ namespace
         if(generated.size() <= promptTokens.size())
             throw std::runtime_error("Self-test generation returned no new tokens");
 
-        std::vector<uint32_t> newTokens(generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()), generated.end());
+        std::vector<uint32_t> newTokens(
+            generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()),
+            generated.end());
         auto const decoded = tokenizer.decodeTokens(newTokens);
 
         std::cout << "=== alpakaNN Chat CLI Self-Test ===" << std::endl;
@@ -515,7 +531,8 @@ namespace
         if(templateSupport == ChatTemplateSupport::unsupported)
         {
             throw std::runtime_error(
-                "Model exposes an unsupported chat_template; only the TinyLlama minimal role-marker template is supported");
+                "Model exposes an unsupported chat_template; only the TinyLlama minimal role-marker template is "
+                "supported");
         }
 
         std::cout << "Interactive chat mode. Type 'quit' or 'exit' to end." << std::endl;
@@ -552,8 +569,11 @@ namespace
                 transcript += "User: " + line + "\nAssistant:";
                 promptTokens = tokenizer.encodePrompt(transcript);
             }
-            auto generated = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, options.maxNewTokens);
-            std::vector<uint32_t> newTokens(generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()), generated.end());
+            auto generated
+                = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, options.maxNewTokens);
+            std::vector<uint32_t> newTokens(
+                generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()),
+                generated.end());
             auto response = trim(tokenizer.decodeTokens(newTokens));
             if(response.empty())
                 throw std::runtime_error("Assistant reply was empty after trimming");
@@ -593,9 +613,8 @@ int main(int argc, char* argv[])
         }
 
         auto const assets = resolveModelAssets(options.modelArg);
-        auto backends = alpaka::onHost::allBackends(
-            alpaka::onHost::enabledDeviceSpecs,
-            alpaka::exec::enabledExecutors);
+        auto backends
+            = alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors);
         auto cfg = std::get<0>(backends);
         auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
         auto device = selector.makeDevice(0);

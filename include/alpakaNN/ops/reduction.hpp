@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "alpakaNN/detail/launch.hpp"
 #include "alpakaNN/core/shape.hpp"
+#include "alpakaNN/detail/launch.hpp"
 
 #include <alpaka/alpaka.hpp>
 
@@ -94,7 +94,10 @@ namespace alpakaNN::ops
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto in) const
             {
                 auto const reduceExtent = static_cast<uint32_t>(in.getExtents()[axis]);
-                for(auto outIdx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto outIdx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                 {
                     auto inIdx = outIdx;
                     auto accum = init;
@@ -120,7 +123,10 @@ namespace alpakaNN::ops
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto lhs, auto rhs) const
             {
                 auto const reduceExtent = static_cast<uint32_t>(lhs.getExtents()[axis]);
-                for(auto outIdx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{out.getExtents()}))
+                for(auto outIdx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{out.getExtents()}))
                 {
                     auto inIdx = outIdx;
                     auto accum = init;
@@ -195,7 +201,10 @@ namespace alpakaNN::ops
             queue,
             exec,
             out.getExtents(),
-            detail::ReduceAxisKernel<detail::IdentityTransform<T_Type>, detail::AddReducer<T_Type>, detail::IdentityFinalizeTyped<T_Type>>{
+            detail::ReduceAxisKernel<
+                detail::IdentityTransform<T_Type>,
+                detail::AddReducer<T_Type>,
+                detail::IdentityFinalizeTyped<T_Type>>{
                 axis,
                 detail::IdentityTransform<T_Type>{},
                 detail::AddReducer<T_Type>{},
@@ -213,7 +222,10 @@ namespace alpakaNN::ops
             queue,
             exec,
             out.getExtents(),
-            detail::ReduceAxisKernel<detail::IdentityTransform<T_Type>, detail::MaxReducer<T_Type>, detail::IdentityFinalizeTyped<T_Type>>{
+            detail::ReduceAxisKernel<
+                detail::IdentityTransform<T_Type>,
+                detail::MaxReducer<T_Type>,
+                detail::IdentityFinalizeTyped<T_Type>>{
                 axis,
                 detail::IdentityTransform<T_Type>{},
                 detail::MaxReducer<T_Type>{},
@@ -231,7 +243,10 @@ namespace alpakaNN::ops
             queue,
             exec,
             out.getExtents(),
-            detail::ReduceAxisKernel<detail::IdentityTransform<T_Type>, detail::AddReducer<T_Type>, detail::MeanFinalizeTyped<T_Type>>{
+            detail::ReduceAxisKernel<
+                detail::IdentityTransform<T_Type>,
+                detail::AddReducer<T_Type>,
+                detail::MeanFinalizeTyped<T_Type>>{
                 axis,
                 detail::IdentityTransform<T_Type>{},
                 detail::AddReducer<T_Type>{},
@@ -249,7 +264,10 @@ namespace alpakaNN::ops
             queue,
             exec,
             out.getExtents(),
-            detail::ReduceAxisKernel<detail::SquareTransform<T_Type>, detail::AddReducer<T_Type>, detail::IdentityFinalizeTyped<T_Type>>{
+            detail::ReduceAxisKernel<
+                detail::SquareTransform<T_Type>,
+                detail::AddReducer<T_Type>,
+                detail::IdentityFinalizeTyped<T_Type>>{
                 axis,
                 detail::SquareTransform<T_Type>{},
                 detail::AddReducer<T_Type>{},
@@ -269,7 +287,10 @@ namespace alpakaNN::ops
             queue,
             exec,
             out.getExtents(),
-            detail::ReduceAxisBinaryKernel<detail::MulTransform<T_Type>, detail::AddReducer<T_Type>, detail::IdentityFinalizeTyped<T_Type>>{
+            detail::ReduceAxisBinaryKernel<
+                detail::MulTransform<T_Type>,
+                detail::AddReducer<T_Type>,
+                detail::IdentityFinalizeTyped<T_Type>>{
                 axis,
                 detail::MulTransform<T_Type>{},
                 detail::AddReducer<T_Type>{},

@@ -15,8 +15,8 @@
 
 namespace alpakaNN::test
 {
-    using TestApis
-        = std::decay_t<decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
+    using TestApis = std::decay_t<
+        decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
 
     template<typename T_Type>
     inline void checkValue(T_Type actual, T_Type expected, double epsilon = 1.0e-5, double margin = 1.0e-6)

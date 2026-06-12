@@ -6,7 +6,6 @@
 #include "../test.hpp"
 
 #include <alpakaNN/alpakaNN.hpp>
-
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -46,7 +45,8 @@ TEMPLATE_LIST_TEST_CASE("softmax and causalSoftmax are stable", "[nn][softmax]",
     CHECK(output[alpaka::Vec{0u, 0u, 0u, 1u}] == 0.0f);
     CHECK(output[alpaka::Vec{0u, 0u, 0u, 2u}] == 0.0f);
     auto sum0 = output[alpaka::Vec{0u, 0u, 0u, 0u}];
-    auto sum1 = output[alpaka::Vec{0u, 0u, 1u, 0u}] + output[alpaka::Vec{0u, 0u, 1u, 1u}] + output[alpaka::Vec{0u, 0u, 1u, 2u}];
+    auto sum1 = output[alpaka::Vec{0u, 0u, 1u, 0u}] + output[alpaka::Vec{0u, 0u, 1u, 1u}]
+                + output[alpaka::Vec{0u, 0u, 1u, 2u}];
     alpakaNN::test::checkValue(sum0, 1.0f);
     alpakaNN::test::checkValue(sum1, 1.0f);
 }

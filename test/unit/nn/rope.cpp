@@ -6,7 +6,6 @@
 #include "../test.hpp"
 
 #include <alpakaNN/alpakaNN.hpp>
-
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -72,8 +71,16 @@ TEMPLATE_LIST_TEST_CASE("rope applies pairwise rotations", "[nn][rope]", TestApi
             auto const s = sinTable[alpaka::Vec{token, pair}];
             auto const baseQ0 = q[alpaka::Vec{0u, token, 0u, pair * 2u}];
             auto const baseQ1 = q[alpaka::Vec{0u, token, 0u, pair * 2u + 1u}];
-            alpakaNN::test::checkValue(outQ[alpaka::Vec{0u, token, 0u, pair * 2u}], baseQ0 * c - baseQ1 * s, 1.0e-12, 1.0e-12);
-            alpakaNN::test::checkValue(outQ[alpaka::Vec{0u, token, 0u, pair * 2u + 1u}], baseQ0 * s + baseQ1 * c, 1.0e-12, 1.0e-12);
+            alpakaNN::test::checkValue(
+                outQ[alpaka::Vec{0u, token, 0u, pair * 2u}],
+                baseQ0 * c - baseQ1 * s,
+                1.0e-12,
+                1.0e-12);
+            alpakaNN::test::checkValue(
+                outQ[alpaka::Vec{0u, token, 0u, pair * 2u + 1u}],
+                baseQ0 * s + baseQ1 * c,
+                1.0e-12,
+                1.0e-12);
         }
     }
 }
