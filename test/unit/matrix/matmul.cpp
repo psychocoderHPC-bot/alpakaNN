@@ -5,7 +5,7 @@
 
 #include <alpaka/alpaka.hpp>
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -75,7 +75,7 @@ void runMatmulCase(auto& queue, auto const& device, auto exec, uint32_t m, uint3
     onHost::memcpy(queue, devB, hostB);
     onHost::memcpy(queue, devC, hostC);
 
-    alpakaNN::matrixMultiply<T_Type>(queue, exec, devA, devB, devC);
+    alpaka::nn::onHost::matrixMultiply<T_Type>(queue, exec, devA, devB, devC);
 
     onHost::memcpy(queue, hostC, devC);
     onHost::wait(queue);

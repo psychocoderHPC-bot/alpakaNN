@@ -29,7 +29,7 @@ function(alpakaNN_add_test_target target_prefix folder)
 
             set(test_target_name "${target_prefix}${test_folder_name}_${source_file_name}")
             add_executable(${test_target_name} ${source_file})
-            target_link_libraries(${test_target_name} PRIVATE Catch2::Catch2WithMain alpakaNN::alpakaNN alpaka::alpaka)
+            target_link_libraries(${test_target_name} PRIVATE Catch2::Catch2WithMain alpaka::nn alpaka::alpaka)
             alpaka_finalize(${test_target_name})
             catch_discover_tests(${test_target_name})
         endforeach()

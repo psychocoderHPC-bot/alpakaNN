@@ -46,7 +46,7 @@ namespace
 #endif
 } // namespace
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE(
     "alpaka fn dispatch selects host specialization when OpenBLAS is enabled",

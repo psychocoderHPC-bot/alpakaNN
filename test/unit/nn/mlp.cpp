@@ -5,13 +5,13 @@
 
 #include "../test.hpp"
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE("mlp matches reference", "[nn][mlp]", TestApis)
 {
@@ -49,7 +49,7 @@ TEMPLATE_LIST_TEST_CASE("mlp matches reference", "[nn][mlp]", TestApis)
     alpaka::onHost::memcpy(queue, devGate, gate);
     alpaka::onHost::memcpy(queue, devUp, up);
     alpaka::onHost::memcpy(queue, devDown, down);
-    alpakaNN::nn::mlp<float>(queue, exec, devInput, devGate, devUp, devDown, devOut);
+    alpaka::nn::onHost::nn::mlp<float>(queue, exec, devInput, devGate, devUp, devDown, devOut);
     alpaka::onHost::memcpy(queue, output, devOut);
     alpaka::onHost::wait(queue);
 
@@ -70,6 +70,6 @@ TEMPLATE_LIST_TEST_CASE("mlp matches reference", "[nn][mlp]", TestApis)
         float expected{};
         for(uint32_t k = 0u; k < 6u; ++k)
             expected += hidden[k] * down[alpaka::Vec{k, col}];
-        alpakaNN::test::checkValue(output[alpaka::Vec{0u, col}], expected);
+        alpaka::nn::test::checkValue(output[alpaka::Vec{0u, col}], expected);
     }
 }

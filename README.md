@@ -8,7 +8,9 @@ It shows two basic implementations:
 
 Keep in mind, that both methods are not optimized for performance and will be much slower than optimized BLAS libraries.
 
-Inference support also includes a tiny LLaMA-style decoder path built from alpaka3 kernels. The tiny end-to-end test downloads and converts `hf-internal-testing/tiny-random-LlamaForCausalLM` into the project’s compact binary format with:
+Inference support also includes a tiny LLaMA-style decoder path built from alpaka3 kernels. Package consumers still use `find_package(alpakaNN CONFIG REQUIRED)`, but the exported CMake target is now `alpaka::nn` and the canonical umbrella include is `<alpaka/nn/nn.hpp>`.
+
+The tiny end-to-end test downloads and converts `hf-internal-testing/tiny-random-LlamaForCausalLM` into the project’s compact binary format with:
 
 `python3 tools/download_tiny_llama.py /workspace/testdata/tiny_llama`
 

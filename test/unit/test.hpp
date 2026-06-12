@@ -13,7 +13,7 @@
 #include <concepts>
 #include <type_traits>
 
-namespace alpakaNN::test
+namespace alpaka::nn::test
 {
     using TestApis = std::decay_t<
         decltype(alpaka::onHost::allBackends(alpaka::onHost::enabledDeviceSpecs, alpaka::exec::enabledExecutors))>;
@@ -26,4 +26,4 @@ namespace alpakaNN::test
         else
             CHECK(actual == expected);
     }
-} // namespace alpakaNN::test
+} // namespace alpaka::nn::test

@@ -5,13 +5,13 @@
 
 #include "../test.hpp"
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE(
     "transformer block runs end to end on tiny dimensions",
@@ -96,7 +96,7 @@ TEMPLATE_LIST_TEST_CASE(
     alpaka::onHost::memcpy(queue, devCos, cosTable);
     alpaka::onHost::memcpy(queue, devSin, sinTable);
 
-    alpakaNN::inference::TransformerBlockWeights<float, decltype(devRms1), decltype(devWq)> weights{
+    alpaka::nn::onHost::inference::TransformerBlockWeights<float, decltype(devRms1), decltype(devWq)> weights{
         devRms1,
         devRms2,
         devWq,
@@ -110,8 +110,17 @@ TEMPLATE_LIST_TEST_CASE(
         kvHeads,
         headDim,
         1.0e-5f};
-    auto cache = alpakaNN::inference::makeKvCache<float>(device, 1u, 1u, kvHeads, tokens, headDim);
-    alpakaNN::inference::transformerBlock<float>(queue, exec, devInput, weights, cache, 0u, devCos, devSin, devOutput);
+    auto cache = alpaka::nn::onHost::inference::makeKvCache<float>(device, 1u, 1u, kvHeads, tokens, headDim);
+    alpaka::nn::onHost::inference::transformerBlock<float>(
+        queue,
+        exec,
+        devInput,
+        weights,
+        cache,
+        0u,
+        devCos,
+        devSin,
+        devOutput);
     alpaka::onHost::memcpy(queue, input, devOutput);
     alpaka::onHost::wait(queue);
 

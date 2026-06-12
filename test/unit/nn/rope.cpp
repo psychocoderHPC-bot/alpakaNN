@@ -5,13 +5,13 @@
 
 #include "../test.hpp"
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE("rope applies pairwise rotations", "[nn][rope]", TestApis)
 {
@@ -58,7 +58,7 @@ TEMPLATE_LIST_TEST_CASE("rope applies pairwise rotations", "[nn][rope]", TestApi
     alpaka::onHost::memcpy(queue, devK, k);
     alpaka::onHost::memcpy(queue, devCos, cosTable);
     alpaka::onHost::memcpy(queue, devSin, sinTable);
-    alpakaNN::nn::rope<double>(queue, exec, devQ, devK, devCos, devSin, devOutQ, devOutK);
+    alpaka::nn::onHost::nn::rope<double>(queue, exec, devQ, devK, devCos, devSin, devOutQ, devOutK);
     alpaka::onHost::memcpy(queue, outQ, devOutQ);
     alpaka::onHost::memcpy(queue, outK, devOutK);
     alpaka::onHost::wait(queue);
@@ -71,12 +71,12 @@ TEMPLATE_LIST_TEST_CASE("rope applies pairwise rotations", "[nn][rope]", TestApi
             auto const s = sinTable[alpaka::Vec{token, pair}];
             auto const baseQ0 = q[alpaka::Vec{0u, token, 0u, pair * 2u}];
             auto const baseQ1 = q[alpaka::Vec{0u, token, 0u, pair * 2u + 1u}];
-            alpakaNN::test::checkValue(
+            alpaka::nn::test::checkValue(
                 outQ[alpaka::Vec{0u, token, 0u, pair * 2u}],
                 baseQ0 * c - baseQ1 * s,
                 1.0e-12,
                 1.0e-12);
-            alpakaNN::test::checkValue(
+            alpaka::nn::test::checkValue(
                 outQ[alpaka::Vec{0u, token, 0u, pair * 2u + 1u}],
                 baseQ0 * s + baseQ1 * c,
                 1.0e-12,
@@ -129,7 +129,7 @@ TEMPLATE_LIST_TEST_CASE("rope rotates q and k with different head counts", "[nn]
     alpaka::onHost::memcpy(queue, devK, k);
     alpaka::onHost::memcpy(queue, devCos, cosTable);
     alpaka::onHost::memcpy(queue, devSin, sinTable);
-    alpakaNN::nn::rope<double>(queue, exec, devQ, devK, devCos, devSin, devOutQ, devOutK);
+    alpaka::nn::onHost::nn::rope<double>(queue, exec, devQ, devK, devCos, devSin, devOutQ, devOutK);
     alpaka::onHost::memcpy(queue, outQ, devOutQ);
     alpaka::onHost::memcpy(queue, outK, devOutK);
     alpaka::onHost::wait(queue);

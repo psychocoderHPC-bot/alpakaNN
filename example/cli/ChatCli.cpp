@@ -5,7 +5,7 @@
 
 #include <alpaka/alpaka.hpp>
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -499,7 +499,7 @@ namespace
         if(promptTokens.empty())
             throw std::runtime_error("Self-test prompt encoding returned no tokens");
 
-        auto generated = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, 8u);
+        auto generated = alpaka::nn::onHost::inference::generateGreedy(queue, exec, model, promptTokens, 8u);
         if(generated.size() <= promptTokens.size())
             throw std::runtime_error("Self-test generation returned no new tokens");
 
@@ -570,7 +570,7 @@ namespace
                 promptTokens = tokenizer.encodePrompt(transcript);
             }
             auto generated
-                = alpakaNN::inference::generateGreedy(queue, exec, model, promptTokens, options.maxNewTokens);
+                = alpaka::nn::onHost::inference::generateGreedy(queue, exec, model, promptTokens, options.maxNewTokens);
             std::vector<uint32_t> newTokens(
                 generated.begin() + static_cast<std::ptrdiff_t>(promptTokens.size()),
                 generated.end());
@@ -621,7 +621,7 @@ int main(int argc, char* argv[])
         auto queue = device.makeQueue();
         auto exec = cfg[alpaka::object::exec];
 
-        auto model = alpakaNN::model::loadTinyLlama<float>(device, assets.modelFile.string());
+        auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, assets.modelFile.string());
         PythonTokenizer tokenizer(assets.modelDir);
 
         if(options.interactive)

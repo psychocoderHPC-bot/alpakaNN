@@ -5,11 +5,11 @@
 
 #include "../test.hpp"
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE("kv cache append and read", "[inference][kv-cache]", TestApis)
 {
@@ -24,7 +24,7 @@ TEMPLATE_LIST_TEST_CASE("kv cache append and read", "[inference][kv-cache]", Tes
     auto exec = cfg[alpaka::object::exec];
     auto queue = device.makeQueue();
 
-    auto cache = alpakaNN::inference::makeKvCache<float>(device, 2u, 1u, 2u, 4u, 3u);
+    auto cache = alpaka::nn::onHost::inference::makeKvCache<float>(device, 2u, 1u, 2u, 4u, 3u);
     auto token = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 1u, 2u, 3u});
     for(auto idx : alpaka::IdxRange{token.getExtents()})
         token[idx] = static_cast<float>(idx[2] * 10u + idx[3] + 1u);
@@ -39,7 +39,7 @@ TEMPLATE_LIST_TEST_CASE("kv cache append and read", "[inference][kv-cache]", Tes
 
     REQUIRE(cache.length(1u, 0u) == 1u);
     for(auto idx : alpaka::IdxRange{hostKeys.getExtents()})
-        alpakaNN::test::checkValue(hostKeys[idx], token[alpaka::Vec{0u, 0u, idx[1], idx[3]}]);
+        alpaka::nn::test::checkValue(hostKeys[idx], token[alpaka::Vec{0u, 0u, idx[1], idx[3]}]);
 }
 
 TEMPLATE_LIST_TEST_CASE("kv cache stores fewer kv heads than query heads", "[inference][kv-cache]", TestApis)
@@ -55,7 +55,7 @@ TEMPLATE_LIST_TEST_CASE("kv cache stores fewer kv heads than query heads", "[inf
     auto exec = cfg[alpaka::object::exec];
     auto queue = device.makeQueue();
 
-    auto cache = alpakaNN::inference::makeKvCache<float>(device, 1u, 1u, 2u, 3u, 2u);
+    auto cache = alpaka::nn::onHost::inference::makeKvCache<float>(device, 1u, 1u, 2u, 3u, 2u);
     auto token = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 1u, 2u, 2u});
     for(auto idx : alpaka::IdxRange{token.getExtents()})
         token[idx] = static_cast<float>(idx[2] * 10u + idx[3] + 1u);
@@ -69,6 +69,6 @@ TEMPLATE_LIST_TEST_CASE("kv cache stores fewer kv heads than query heads", "[inf
     alpaka::onHost::wait(queue);
 
     REQUIRE(hostValues.getExtents()[1] == 2u);
-    alpakaNN::test::checkValue(hostValues[alpaka::Vec{0u, 0u, 0u, 0u}], 1.0f);
-    alpakaNN::test::checkValue(hostValues[alpaka::Vec{0u, 1u, 0u, 1u}], 12.0f);
+    alpaka::nn::test::checkValue(hostValues[alpaka::Vec{0u, 0u, 0u, 0u}], 1.0f);
+    alpaka::nn::test::checkValue(hostValues[alpaka::Vec{0u, 1u, 0u, 1u}], 12.0f);
 }

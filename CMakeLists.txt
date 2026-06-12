@@ -56,13 +56,16 @@ if(alpakaNN_OPENBLAS)
 endif()
 
 add_library(alpakaNN INTERFACE)
-add_library(alpakaNN::alpakaNN ALIAS alpakaNN)
+add_library(alpaka::nn ALIAS alpakaNN)
+set_target_properties(alpakaNN PROPERTIES EXPORT_NAME nn)
 
 target_compile_features(alpakaNN INTERFACE cxx_std_20)
 target_compile_definitions(alpakaNN INTERFACE ALPAKANN_OPENBLAS_ENABLED=$<BOOL:${alpakaNN_OPENBLAS}>)
 target_include_directories(
     alpakaNN
-    INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(alpakaNN INTERFACE $<BUILD_INTERFACE:alpaka::alpaka>)
 if(alpakaNN_OPENBLAS)
@@ -85,7 +88,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION ${CMAKE_INSTA
 
 install(TARGETS alpakaNN EXPORT alpakaNNTargets)
 
-install(EXPORT alpakaNNTargets NAMESPACE alpakaNN:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/alpakaNN)
+install(EXPORT alpakaNNTargets NAMESPACE alpaka:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/alpakaNN)
 
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/alpakaNNConfigVersion.cmake"

@@ -7,11 +7,11 @@
 
 #include <alpaka/alpaka.hpp>
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE("gemv supports contiguous and subviews", "[matrix][gemv]", TestApis)
 {
@@ -42,7 +42,7 @@ TEMPLATE_LIST_TEST_CASE("gemv supports contiguous and subviews", "[matrix][gemv]
     alpaka::onHost::memcpy(queue, devW, hostW);
     alpaka::onHost::memcpy(queue, devX, hostX);
 
-    alpakaNN::gemv<float>(queue, exec, devW, devX, devY);
+    alpaka::nn::onHost::gemv<float>(queue, exec, devW, devX, devY);
     alpaka::onHost::memcpy(queue, hostY, devY);
     alpaka::onHost::wait(queue);
 
@@ -51,6 +51,6 @@ TEMPLATE_LIST_TEST_CASE("gemv supports contiguous and subviews", "[matrix][gemv]
         float expected{};
         for(uint32_t col = 0u; col < hostX.getExtents()[0]; ++col)
             expected += hostW[alpaka::Vec{row, col}] * hostX[alpaka::Vec{col}];
-        alpakaNN::test::checkValue(hostY[alpaka::Vec{row}], expected);
+        alpaka::nn::test::checkValue(hostY[alpaka::Vec{row}], expected);
     }
 }

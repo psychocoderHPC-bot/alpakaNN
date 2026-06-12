@@ -5,13 +5,13 @@
 
 #include "../test.hpp"
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE("softmax and causalSoftmax are stable", "[nn][softmax]", TestApis)
 {
@@ -38,7 +38,7 @@ TEMPLATE_LIST_TEST_CASE("softmax and causalSoftmax are stable", "[nn][softmax]",
     auto devIn = alpaka::onHost::allocLike(device, input);
     auto devOut = alpaka::onHost::allocLike(device, output);
     alpaka::onHost::memcpy(queue, devIn, input);
-    alpakaNN::nn::causalSoftmax<float>(queue, exec, devIn, devOut, 3u, 2u, 3u);
+    alpaka::nn::onHost::nn::causalSoftmax<float>(queue, exec, devIn, devOut, 3u, 2u, 3u);
     alpaka::onHost::memcpy(queue, output, devOut);
     alpaka::onHost::wait(queue);
 
@@ -47,6 +47,6 @@ TEMPLATE_LIST_TEST_CASE("softmax and causalSoftmax are stable", "[nn][softmax]",
     auto sum0 = output[alpaka::Vec{0u, 0u, 0u, 0u}];
     auto sum1 = output[alpaka::Vec{0u, 0u, 1u, 0u}] + output[alpaka::Vec{0u, 0u, 1u, 1u}]
                 + output[alpaka::Vec{0u, 0u, 1u, 2u}];
-    alpakaNN::test::checkValue(sum0, 1.0f);
-    alpakaNN::test::checkValue(sum1, 1.0f);
+    alpaka::nn::test::checkValue(sum0, 1.0f);
+    alpaka::nn::test::checkValue(sum1, 1.0f);
 }

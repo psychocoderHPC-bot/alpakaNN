@@ -5,7 +5,7 @@
 
 #include "../test.hpp"
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -58,7 +58,7 @@ TEST_CASE("loadTinyLlama accepts valid grouped-query attention configs", "[model
     auto const path = writeModelFile(4u, 2u);
     auto device = selector.makeDevice(0);
     REQUIRE_THROWS_WITH(
-        alpakaNN::model::loadTinyLlama<float>(device, path.string()),
+        alpaka::nn::onHost::model::loadTinyLlama<float>(device, path.string()),
         Catch::Matchers::ContainsSubstring("Unexpected end of file"));
     fs::remove(path);
 }
@@ -77,7 +77,7 @@ TEST_CASE("loadTinyLlama rejects invalid grouped-query attention ratios", "[mode
     auto const path = writeModelFile(4u, 3u);
     auto device = selector.makeDevice(0);
     REQUIRE_THROWS_WITH(
-        alpakaNN::model::loadTinyLlama<float>(device, path.string()),
+        alpaka::nn::onHost::model::loadTinyLlama<float>(device, path.string()),
         Catch::Matchers::ContainsSubstring("divisible by numKeyValueHeads"));
     fs::remove(path);
 }

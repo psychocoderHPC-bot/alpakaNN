@@ -5,11 +5,11 @@
 
 #include "../test.hpp"
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE("rmsNorm matches reference", "[nn][rmsnorm]", TestApis)
 {
@@ -37,7 +37,7 @@ TEMPLATE_LIST_TEST_CASE("rmsNorm matches reference", "[nn][rmsnorm]", TestApis)
     auto devOut = alpaka::onHost::allocLike(device, output);
     alpaka::onHost::memcpy(queue, devIn, input);
     alpaka::onHost::memcpy(queue, devWeight, weight);
-    alpakaNN::nn::rmsNorm<float>(queue, exec, devIn, devWeight, devOut, 1.0e-5f);
+    alpaka::nn::onHost::nn::rmsNorm<float>(queue, exec, devIn, devWeight, devOut, 1.0e-5f);
     alpaka::onHost::memcpy(queue, output, devOut);
     alpaka::onHost::wait(queue);
 
@@ -48,7 +48,7 @@ TEMPLATE_LIST_TEST_CASE("rmsNorm matches reference", "[nn][rmsnorm]", TestApis)
             sumSquares += input[alpaka::Vec{row, col}] * input[alpaka::Vec{row, col}];
         auto const invRms = 1.0f / std::sqrt(sumSquares / 4.0f + 1.0e-5f);
         for(uint32_t col = 0u; col < 4u; ++col)
-            alpakaNN::test::checkValue(
+            alpaka::nn::test::checkValue(
                 output[alpaka::Vec{row, col}],
                 input[alpaka::Vec{row, col}] * invRms * weight[alpaka::Vec{col}]);
     }

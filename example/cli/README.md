@@ -1,6 +1,6 @@
 # alpakaNN Chat CLI
 
-Minimal CLI example for loading a Llama-family checkpoint with alpakaNN.
+Minimal CLI example for loading a Llama-family checkpoint with `alpaka::nn`.
 
 ## Build
 
@@ -8,6 +8,8 @@ Minimal CLI example for loading a Llama-family checkpoint with alpakaNN.
 cmake -S . -B build -DalpakaNN_BUILD_TESTS=OFF
 cmake --build build --target ChatCli
 ```
+
+The CLI consumes the public umbrella header `<alpaka/nn/nn.hpp>` and links against the exported target `alpaka::nn`.
 
 ## Usage
 

@@ -5,11 +5,11 @@
 
 #include "../test.hpp"
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 TEMPLATE_LIST_TEST_CASE("attention scores and apply are deterministic", "[nn][attention]", TestApis)
 {
@@ -47,9 +47,9 @@ TEMPLATE_LIST_TEST_CASE("attention scores and apply are deterministic", "[nn][at
     alpaka::onHost::memcpy(queue, devK, k);
     alpaka::onHost::memcpy(queue, devV, v);
 
-    alpakaNN::nn::attentionScores<float>(queue, exec, devQ, devK, devScores);
-    alpakaNN::nn::softmax<float>(queue, exec, devScores, devProbs, 3u);
-    alpakaNN::nn::attentionApply<float>(queue, exec, devProbs, devV, devOut);
+    alpaka::nn::onHost::nn::attentionScores<float>(queue, exec, devQ, devK, devScores);
+    alpaka::nn::onHost::nn::softmax<float>(queue, exec, devScores, devProbs, 3u);
+    alpaka::nn::onHost::nn::attentionApply<float>(queue, exec, devProbs, devV, devOut);
     alpaka::onHost::memcpy(queue, scores, devScores);
     alpaka::onHost::memcpy(queue, probs, devProbs);
     alpaka::onHost::memcpy(queue, out, devOut);
@@ -105,39 +105,39 @@ TEMPLATE_LIST_TEST_CASE("attention maps grouped query heads onto fewer kv heads"
     alpaka::onHost::memcpy(queue, devK, k);
     alpaka::onHost::memcpy(queue, devV, v);
 
-    alpakaNN::nn::attentionScores<float>(
+    alpaka::nn::onHost::nn::attentionScores<float>(
         queue,
         exec,
         devQ,
         devK,
         devScores,
         2u,
-        alpakaNN::nn::AttentionKvLayout::BTHD);
-    alpakaNN::nn::softmax<float>(queue, exec, devScores, devProbs, 3u);
-    alpakaNN::nn::attentionApply<float>(
+        alpaka::nn::AttentionKvLayout::BTHD);
+    alpaka::nn::onHost::nn::softmax<float>(queue, exec, devScores, devProbs, 3u);
+    alpaka::nn::onHost::nn::attentionApply<float>(
         queue,
         exec,
         devProbs,
         devV,
         devOut,
         2u,
-        alpakaNN::nn::AttentionKvLayout::BTHD);
+        alpaka::nn::AttentionKvLayout::BTHD);
     alpaka::onHost::memcpy(queue, scores, devScores);
     alpaka::onHost::memcpy(queue, out, devOut);
     alpaka::onHost::wait(queue);
 
-    alpakaNN::test::checkValue(scores[alpaka::Vec{0u, 0u, 0u, 0u}], 5.0f);
-    alpakaNN::test::checkValue(scores[alpaka::Vec{0u, 1u, 0u, 0u}], 8.0f);
-    alpakaNN::test::checkValue(scores[alpaka::Vec{0u, 2u, 0u, 0u}], 25.0f);
-    alpakaNN::test::checkValue(scores[alpaka::Vec{0u, 3u, 0u, 0u}], 32.0f);
+    alpaka::nn::test::checkValue(scores[alpaka::Vec{0u, 0u, 0u, 0u}], 5.0f);
+    alpaka::nn::test::checkValue(scores[alpaka::Vec{0u, 1u, 0u, 0u}], 8.0f);
+    alpaka::nn::test::checkValue(scores[alpaka::Vec{0u, 2u, 0u, 0u}], 25.0f);
+    alpaka::nn::test::checkValue(scores[alpaka::Vec{0u, 3u, 0u, 0u}], 32.0f);
     for(uint32_t head = 0u; head < 2u; ++head)
     {
-        alpakaNN::test::checkValue(out[alpaka::Vec{0u, 0u, head, 0u}], 10.0f);
-        alpakaNN::test::checkValue(out[alpaka::Vec{0u, 0u, head, 1u}], 20.0f);
+        alpaka::nn::test::checkValue(out[alpaka::Vec{0u, 0u, head, 0u}], 10.0f);
+        alpaka::nn::test::checkValue(out[alpaka::Vec{0u, 0u, head, 1u}], 20.0f);
     }
     for(uint32_t head = 2u; head < 4u; ++head)
     {
-        alpakaNN::test::checkValue(out[alpaka::Vec{0u, 0u, head, 0u}], 30.0f);
-        alpakaNN::test::checkValue(out[alpaka::Vec{0u, 0u, head, 1u}], 40.0f);
+        alpaka::nn::test::checkValue(out[alpaka::Vec{0u, 0u, head, 0u}], 30.0f);
+        alpaka::nn::test::checkValue(out[alpaka::Vec{0u, 0u, head, 1u}], 40.0f);
     }
 }

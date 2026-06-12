@@ -7,11 +7,11 @@
 
 #include <alpaka/alpaka.hpp>
 
-#include <alpakaNN/alpakaNN.hpp>
+#include <alpaka/nn/nn.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-using TestApis = alpakaNN::test::TestApis;
+using TestApis = alpaka::nn::test::TestApis;
 
 template<typename T_Type>
 void initReductionInput(auto& in)
@@ -40,7 +40,7 @@ TEMPLATE_LIST_TEST_CASE("axis reductions", "[ops][reduction]", TestApis)
 
     auto hostIn = alpaka::onHost::allocHost<double>(alpaka::Vec{2u, 3u, 4u});
     initReductionInput<double>(hostIn);
-    auto hostOut = alpaka::onHost::allocHost<double>(alpakaNN::ops::makeReducedExtents(hostIn.getExtents(), 2u));
+    auto hostOut = alpaka::onHost::allocHost<double>(alpaka::nn::onHost::ops::makeReducedExtents(hostIn.getExtents(), 2u));
     auto devIn = alpaka::onHost::allocLike(device, hostIn);
     auto devOut = alpaka::onHost::allocLike(device, hostOut);
 
@@ -48,7 +48,7 @@ TEMPLATE_LIST_TEST_CASE("axis reductions", "[ops][reduction]", TestApis)
 
     SECTION("sum mean max sumSquares over fastest axis")
     {
-        alpakaNN::ops::reduceSum<double>(queue, exec, devIn, devOut, 2u);
+        alpaka::nn::onHost::ops::reduceSum<double>(queue, exec, devIn, devOut, 2u);
         alpaka::onHost::memcpy(queue, hostOut, devOut);
         alpaka::onHost::wait(queue);
         for(auto idx : alpaka::IdxRange{hostOut.getExtents()})
@@ -60,12 +60,12 @@ TEMPLATE_LIST_TEST_CASE("axis reductions", "[ops][reduction]", TestApis)
                 base[2] = r;
                 sum += hostIn[base];
             }
-            alpakaNN::test::checkValue(hostOut[idx], sum, 1.0e-12, 1.0e-12);
+            alpaka::nn::test::checkValue(hostOut[idx], sum, 1.0e-12, 1.0e-12);
         }
 
-        alpakaNN::ops::reduceMean<double>(queue, exec, devIn, devOut, 2u);
-        alpakaNN::ops::reduceMax<double>(queue, exec, devIn, devOut, 2u);
-        alpakaNN::ops::reduceSumSquares<double>(queue, exec, devIn, devOut, 2u);
+        alpaka::nn::onHost::ops::reduceMean<double>(queue, exec, devIn, devOut, 2u);
+        alpaka::nn::onHost::ops::reduceMax<double>(queue, exec, devIn, devOut, 2u);
+        alpaka::nn::onHost::ops::reduceSumSquares<double>(queue, exec, devIn, devOut, 2u);
         alpaka::onHost::memcpy(queue, hostOut, devOut);
         alpaka::onHost::wait(queue);
         for(auto idx : alpaka::IdxRange{hostOut.getExtents()})
@@ -77,7 +77,7 @@ TEMPLATE_LIST_TEST_CASE("axis reductions", "[ops][reduction]", TestApis)
                 base[2] = r;
                 expected += hostIn[base] * hostIn[base];
             }
-            alpakaNN::test::checkValue(hostOut[idx], expected, 1.0e-12, 1.0e-12);
+            alpaka::nn::test::checkValue(hostOut[idx], expected, 1.0e-12, 1.0e-12);
         }
     }
 
@@ -85,24 +85,24 @@ TEMPLATE_LIST_TEST_CASE("axis reductions", "[ops][reduction]", TestApis)
     {
         auto lhsStorage = std::vector<float>(48u, 0.0f);
         auto rhsStorage = std::vector<float>(48u, 0.0f);
-        auto lhs = alpakaNN::view::makePaddedView<float>(
+        auto lhs = alpaka::nn::onHost::view::makePaddedView<float>(
             lhsStorage.data(),
             std::array<std::size_t, 3u>{2u, 3u, 4u},
             std::array<std::size_t, 3u>{24u, 8u, 1u});
-        auto rhs = alpakaNN::view::makePaddedView<float>(
+        auto rhs = alpaka::nn::onHost::view::makePaddedView<float>(
             rhsStorage.data(),
             std::array<std::size_t, 3u>{2u, 3u, 4u},
             std::array<std::size_t, 3u>{24u, 8u, 1u});
         initReductionInput<float>(lhs);
         initReductionInput<float>(rhs);
-        auto hostDot = alpaka::onHost::allocHost<float>(alpakaNN::ops::makeReducedExtents(lhs.getExtents(), 1u));
+        auto hostDot = alpaka::onHost::allocHost<float>(alpaka::nn::onHost::ops::makeReducedExtents(lhs.getExtents(), 1u));
         auto devLhs = alpaka::onHost::allocLike(device, lhs);
         auto devRhs = alpaka::onHost::allocLike(device, rhs);
         auto devDot = alpaka::onHost::allocLike(device, hostDot);
         alpaka::onHost::memcpy(queue, devLhs, lhs);
         alpaka::onHost::memcpy(queue, devRhs, rhs);
 
-        alpakaNN::ops::dot<float>(queue, exec, devLhs, devRhs, devDot, 1u);
+        alpaka::nn::onHost::ops::dot<float>(queue, exec, devLhs, devRhs, devDot, 1u);
         alpaka::onHost::memcpy(queue, hostDot, devDot);
         alpaka::onHost::wait(queue);
 
@@ -115,7 +115,7 @@ TEMPLATE_LIST_TEST_CASE("axis reductions", "[ops][reduction]", TestApis)
                 base[1] = r;
                 expected += lhs[base] * rhs[base];
             }
-            alpakaNN::test::checkValue(hostDot[idx], expected);
+            alpaka::nn::test::checkValue(hostDot[idx], expected);
         }
     }
 }
