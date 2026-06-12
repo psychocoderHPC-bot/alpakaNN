@@ -19,7 +19,7 @@ namespace alpaka::nn::onAcc::internal::nn
         ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto input, auto weight) const
         {
             auto const extents = out.getExtents();
-            auto const hiddenAxis = extents.dim() - 1u;
+            auto const hiddenAxis = ALPAKA_TYPEOF(extents)::dim() - 1u;
             auto const hiddenExtent = static_cast<uint32_t>(extents[hiddenAxis]);
 
             for(auto idx :

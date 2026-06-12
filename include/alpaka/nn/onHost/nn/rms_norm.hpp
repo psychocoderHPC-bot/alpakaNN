@@ -17,14 +17,18 @@ namespace alpaka::nn::onHost::nn
     template<typename T_Type>
     void rmsNorm(auto& queue, auto exec, auto const& input, auto const& weight, auto& output, T_Type epsilon)
     {
-        if(input.getExtents() != output.getExtents())
+        auto const inputExtents = input.getExtents();
+        auto const weightExtents = weight.getExtents();
+        auto const outputExtents = output.getExtents();
+
+        if(inputExtents != outputExtents)
             throw std::invalid_argument{"rmsNorm shape mismatch."};
-        if(weight.getExtents().dim() != 1u
-           || weight.getExtents()[0] != input.getExtents()[input.getExtents().dim() - 1u])
+        if(ALPAKA_TYPEOF(weightExtents)::dim() != 1u
+           || weightExtents[0] != inputExtents[ALPAKA_TYPEOF(inputExtents)::dim() - 1u])
             throw std::invalid_argument{"rmsNorm expects a 1D weight matching the last axis."};
 
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, output.getExtents()),
+            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, outputExtents),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::RmsNormKernel<T_Type>{epsilon},
                 output,

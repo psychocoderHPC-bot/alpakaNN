@@ -17,13 +17,18 @@ namespace alpaka::nn::onHost::nn
     template<typename T_Type>
     void embeddingLookup(auto& queue, auto exec, auto const& tokenIds, auto const& embedding, auto& output)
     {
-        if(tokenIds.getExtents().dim() != 1u || embedding.getExtents().dim() != 2u || output.getExtents().dim() != 2u)
+        auto const tokenExtents = tokenIds.getExtents();
+        auto const embeddingExtents = embedding.getExtents();
+        auto const outputExtents = output.getExtents();
+
+        if(ALPAKA_TYPEOF(tokenExtents)::dim() != 1u || ALPAKA_TYPEOF(embeddingExtents)::dim() != 2u
+           || ALPAKA_TYPEOF(outputExtents)::dim() != 2u)
             throw std::invalid_argument{"embeddingLookup expects 1D ids and 2D embedding/output."};
-        if(output.getExtents()[0] != tokenIds.getExtents()[0] || output.getExtents()[1] != embedding.getExtents()[1])
+        if(outputExtents[0] != tokenExtents[0] || outputExtents[1] != embeddingExtents[1])
             throw std::invalid_argument{"embeddingLookup shape mismatch."};
 
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, output.getExtents()),
+            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, outputExtents),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::EmbeddingLookupKernel<T_Type>{},
                 output,

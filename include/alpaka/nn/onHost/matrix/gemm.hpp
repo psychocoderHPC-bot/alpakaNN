@@ -108,7 +108,8 @@ namespace alpaka::nn::onHost
         auto const bExtent = B.getExtents();
         auto const cExtent = C.getExtents();
 
-        if(aExtent.dim() != 2u || bExtent.dim() != 2u || cExtent.dim() != 2u)
+        if(ALPAKA_TYPEOF(aExtent)::dim() != 2u || ALPAKA_TYPEOF(bExtent)::dim() != 2u
+           || ALPAKA_TYPEOF(cExtent)::dim() != 2u)
             throw std::invalid_argument{"gemm expects 2D matrices."};
         if(aExtent.x() != bExtent.y())
             throw std::invalid_argument{"gemm requires A.cols == B.rows."};

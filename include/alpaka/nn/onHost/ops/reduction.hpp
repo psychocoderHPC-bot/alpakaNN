@@ -176,11 +176,14 @@ namespace alpaka::nn::onHost::ops
             uint32_t axis,
             char const* what)
         {
-            if(in.getExtents().dim() != out.getExtents().dim())
+            auto const inExtents = in.getExtents();
+            auto const outExtents = out.getExtents();
+
+            if(ALPAKA_TYPEOF(inExtents)::dim() != ALPAKA_TYPEOF(outExtents)::dim())
                 throw std::invalid_argument{std::string(what) + " requires output rank to match input rank."};
-            if(axis >= in.getExtents().dim())
+            if(axis >= ALPAKA_TYPEOF(inExtents)::dim())
                 throw std::invalid_argument{std::string(what) + " axis out of range."};
-            if(out.getExtents() != makeReducedExtents(in.getExtents(), axis))
+            if(outExtents != makeReducedExtents(inExtents, axis))
                 throw std::invalid_argument{std::string(what) + " output extents mismatch."};
         }
 

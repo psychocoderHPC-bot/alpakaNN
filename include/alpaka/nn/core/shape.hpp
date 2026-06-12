@@ -38,12 +38,14 @@ namespace alpaka::nn::shape
     template<typename T_Layout>
     inline void requireLayout(alpaka::concepts::IMdSpan auto const& view)
     {
-        layout::requireRank<T_Layout>(view.getExtents().dim());
+        auto const extents = view.getExtents();
+        layout::requireRank<T_Layout>(ALPAKA_TYPEOF(extents)::dim());
     }
 
     inline void requireAxis(alpaka::concepts::IMdSpan auto const& view, uint32_t axis, std::string_view what)
     {
-        if(axis >= view.getExtents().dim())
+        auto const extents = view.getExtents();
+        if(axis >= ALPAKA_TYPEOF(extents)::dim())
             throw std::invalid_argument{std::string(what) + " axis out of range."};
     }
 
@@ -55,12 +57,13 @@ namespace alpaka::nn::shape
 
     inline bool isContiguous(alpaka::concepts::IMdSpan auto const& view)
     {
+        auto const extents = view.getExtents();
         auto expectedPitch = std::size_t{1u};
-        for(uint32_t axis = view.getExtents().dim(); axis-- > 0u;)
+        for(uint32_t axis = ALPAKA_TYPEOF(extents)::dim(); axis-- > 0u;)
         {
             if(elementPitchAt(view, axis) != expectedPitch)
                 return false;
-            expectedPitch *= static_cast<std::size_t>(extentAt(view.getExtents(), axis));
+            expectedPitch *= static_cast<std::size_t>(extentAt(extents, axis));
         }
         return true;
     }

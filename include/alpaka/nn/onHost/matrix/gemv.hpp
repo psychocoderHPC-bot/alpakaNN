@@ -102,7 +102,8 @@ namespace alpaka::nn::onHost
         auto const xExtent = x.getExtents();
         auto const yExtent = y.getExtents();
 
-        if(wExtent.dim() != 2u || xExtent.dim() != 1u || yExtent.dim() != 1u)
+        if(ALPAKA_TYPEOF(wExtent)::dim() != 2u || ALPAKA_TYPEOF(xExtent)::dim() != 1u
+           || ALPAKA_TYPEOF(yExtent)::dim() != 1u)
             throw std::invalid_argument{"gemv expects W as 2D and x/y as 1D views."};
         if(wExtent.x() != xExtent[0] || wExtent.y() != yExtent[0])
             throw std::invalid_argument{"gemv shape mismatch."};

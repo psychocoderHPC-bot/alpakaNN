@@ -222,11 +222,10 @@ namespace alpaka::nn::ops
         {
             ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto input, auto bias) const
             {
-                auto const axis = out.getExtents().dim() - 1u;
-                for(auto idx : alpaka::onAcc::makeIdxMap(
-                        acc,
-                        alpaka::onAcc::worker::threadsInGrid,
-                        alpaka::IdxRange{out.getExtents()}))
+                auto const outExtents = out.getExtents();
+                auto const axis = ALPAKA_TYPEOF(outExtents)::dim() - 1u;
+                for(auto idx :
+                    alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{outExtents}))
                     out[idx] = input[idx] + bias[alpaka::Vec{idx[axis]}];
             }
         };
@@ -244,9 +243,12 @@ namespace alpaka::nn::ops
             alpaka::concepts::IMdSpan auto const& input,
             alpaka::concepts::IMdSpan auto const& bias)
         {
-            if(bias.getExtents().dim() != 1u)
+            auto const inputExtents = input.getExtents();
+            auto const biasExtents = bias.getExtents();
+
+            if(ALPAKA_TYPEOF(biasExtents)::dim() != 1u)
                 throw std::invalid_argument{"biasAdd expects a 1D bias view."};
-            if(bias.getExtents()[0] != input.getExtents()[input.getExtents().dim() - 1u])
+            if(biasExtents[0] != inputExtents[ALPAKA_TYPEOF(inputExtents)::dim() - 1u])
                 throw std::invalid_argument{"biasAdd expects bias extent to match the last axis."};
         }
 

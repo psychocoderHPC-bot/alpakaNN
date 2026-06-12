@@ -47,12 +47,14 @@ namespace alpaka::nn::onHost::matrix::internal
     template<typename T_View>
     inline bool hasBlasMatrixLayout(T_View const& view)
     {
-        return view.getExtents().dim() == 2u && shape::isAxisContiguous(view, 1u);
+        auto const extents = view.getExtents();
+        return ALPAKA_TYPEOF(extents)::dim() == 2u && shape::isAxisContiguous(view, 1u);
     }
 
     template<typename T_View>
     inline bool hasBlasVectorLayout(T_View const& view)
     {
-        return view.getExtents().dim() == 1u;
+        auto const extents = view.getExtents();
+        return ALPAKA_TYPEOF(extents)::dim() == 1u;
     }
 } // namespace alpaka::nn::onHost::matrix::internal

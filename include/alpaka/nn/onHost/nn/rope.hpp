@@ -26,19 +26,23 @@ namespace alpaka::nn::onHost::nn
             auto const& sinTable,
             uint32_t positionOffset)
         {
-            if(in.getExtents() != out.getExtents())
+            auto const inExtents = in.getExtents();
+            auto const outExtents = out.getExtents();
+            auto const cosExtents = cosTable.getExtents();
+            auto const sinExtents = sinTable.getExtents();
+
+            if(inExtents != outExtents)
                 throw std::invalid_argument{"rope shape mismatch."};
-            auto const headDimAxis = in.getExtents().dim() - 1u;
-            auto const headDim = static_cast<uint32_t>(in.getExtents()[headDimAxis]);
+            auto const headDimAxis = ALPAKA_TYPEOF(inExtents)::dim() - 1u;
+            auto const headDim = static_cast<uint32_t>(inExtents[headDimAxis]);
             if(headDim % 2u != 0u)
                 throw std::invalid_argument{"rope requires an even head dimension."};
-            if(cosTable.getExtents() != sinTable.getExtents())
+            if(cosExtents != sinExtents)
                 throw std::invalid_argument{"rope cosine/sine table shape mismatch."};
-            if(static_cast<uint32_t>(cosTable.getExtents()[1]) != headDim / 2u)
+            if(static_cast<uint32_t>(cosExtents[1]) != headDim / 2u)
                 throw std::invalid_argument{"rope table pair count mismatch."};
-            auto const tokenAxis = in.getExtents().dim() == 4u ? 1u : 0u;
-            if(positionOffset + static_cast<uint32_t>(in.getExtents()[tokenAxis])
-               > static_cast<uint32_t>(cosTable.getExtents()[0]))
+            auto const tokenAxis = ALPAKA_TYPEOF(inExtents)::dim() == 4u ? 1u : 0u;
+            if(positionOffset + static_cast<uint32_t>(inExtents[tokenAxis]) > static_cast<uint32_t>(cosExtents[0]))
                 throw std::invalid_argument{"rope table does not cover requested positions."};
         }
     } // namespace internal

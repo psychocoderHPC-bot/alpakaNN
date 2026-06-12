@@ -27,11 +27,10 @@ namespace alpaka::nn::onAcc::internal::nn
 
         ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto in, auto cosTable, auto sinTable) const
         {
-            auto const headDimAxis = out.getExtents().dim() - 1u;
-            for(auto idx : alpaka::onAcc::makeIdxMap(
-                    acc,
-                    alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{out.getExtents()}))
+            auto const outExtents = out.getExtents();
+            auto const headDimAxis = ALPAKA_TYPEOF(outExtents)::dim() - 1u;
+            for(auto idx :
+                alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{outExtents}))
             {
                 auto const component = static_cast<uint32_t>(idx[headDimAxis]);
                 auto const pair = component / 2u;
