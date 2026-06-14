@@ -6,7 +6,6 @@
 #pragma once
 
 #include <alpaka/alpaka.hpp>
-#include <alpaka/nn/onHost/ops/elementwise.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <cstdint>
@@ -15,6 +14,28 @@
 
 namespace alpaka::nn::onHost::inference
 {
+    namespace detail
+    {
+        template<typename T_Type>
+        struct CacheAppendTokenKernel
+        {
+            uint32_t batch;
+            uint32_t token;
+
+            ALPAKA_FN_ACC void operator()(auto const& acc, auto dst, auto src) const
+            {
+                auto const extents = src.getExtents();
+                for(auto idx : alpaka::onAcc::makeIdxMap(
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{extents}))
+                {
+                    dst[alpaka::Vec{batch, idx[2], token, idx[3]}] = src[idx];
+                }
+            }
+        };
+    } // namespace detail
+
     template<typename T_Type, typename T_Buffer>
     struct KvCache
     {
@@ -84,20 +105,15 @@ namespace alpaka::nn::onHost::inference
                 throw std::invalid_argument{"KvCache append shape mismatch."};
             if(token >= maxContext)
                 throw std::out_of_range{"KvCache append exceeded max context."};
-            for(uint32_t head = 0u; head < numKeyValueHeads; ++head)
-            {
-                auto dstKey
-                    = keys.at(layer).getSubView(alpaka::Vec{batch, head, token, 0u}, alpaka::Vec{1u, 1u, 1u, headDim});
-                auto srcKey
-                    = keyToken.getSubView(alpaka::Vec{0u, 0u, head, 0u}, alpaka::Vec{1u, 1u, 1u, headDim});
-                auto dstValue = values.at(layer).getSubView(
-                    alpaka::Vec{batch, head, token, 0u},
-                    alpaka::Vec{1u, 1u, 1u, headDim});
-                auto srcValue
-                    = valueToken.getSubView(alpaka::Vec{0u, 0u, head, 0u}, alpaka::Vec{1u, 1u, 1u, headDim});
-                alpaka::nn::onHost::ops::copy(queue, exec, srcKey, dstKey);
-                alpaka::nn::onHost::ops::copy(queue, exec, srcValue, dstValue);
-            }
+            queue.enqueue(
+                alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, keyToken.getExtents()),
+                alpaka::KernelBundle{detail::CacheAppendTokenKernel<T_Type>{batch, token}, keys.at(layer), keyToken});
+            queue.enqueue(
+                alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, valueToken.getExtents()),
+                alpaka::KernelBundle{
+                    detail::CacheAppendTokenKernel<T_Type>{batch, token},
+                    values.at(layer),
+                    valueToken});
             setLength(layer, batch, token + 1u);
         }
 
