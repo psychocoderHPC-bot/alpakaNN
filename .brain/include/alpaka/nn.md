@@ -29,8 +29,10 @@
   - Host-side shape checks cache extents locally before type-based rank queries.
 - `onHost/inference`
   - KV cache, transformer block, and greedy generation.
+  - `generate.hpp` supports `ALPAKANN_DEBUG_TOPK=1` to print per-step top logits and selections during greedy decoding.
 - `onHost/model`
   - TinyLlama loader and decoder orchestration.
+  - `decoder.hpp` supports `ALPAKANN_DEBUG_PREFILL_TRACE=1` to print per-stage tensor summaries through `prefill`, useful for CUDA divergence tracing between implicit and explicit cache paths.
 
 ## Acc internals
 

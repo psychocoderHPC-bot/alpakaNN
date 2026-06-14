@@ -101,7 +101,7 @@ namespace alpaka::nn::onHost::inference
             model.config.numKeyValueHeads,
             static_cast<uint32_t>(tokens.size() + maxNewTokens),
             model.config.hiddenSize / model.config.numHeads);
-        auto logits = alpaka::nn::onHost::model::prefill(queue, exec, model, tokens, cache);
+        auto logits = alpaka::nn::onHost::model::prefill(queue, exec, model, tokens, cache, "generate prefill");
         for(uint32_t step = 0u; step < maxNewTokens; ++step)
         {
             auto hostLogits = alpaka::onHost::allocHost<typename T_Model::value_type>(logits.getExtents());

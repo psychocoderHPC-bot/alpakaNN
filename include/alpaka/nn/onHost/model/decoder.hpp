@@ -12,9 +12,12 @@
 #include <alpaka/nn/onHost/nn/embedding.hpp>
 #include <alpaka/nn/onHost/nn/rms_norm.hpp>
 
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -23,6 +26,80 @@
 
 namespace alpaka::nn::onHost::model
 {
+    namespace detail
+    {
+        inline bool prefillTraceEnabled()
+        {
+            auto const* env = std::getenv("ALPAKANN_DEBUG_PREFILL_TRACE");
+            return env != nullptr && env[0] != '\0' && env[0] != '0';
+        }
+
+        inline void printTrace(std::string const& message)
+        {
+            if(prefillTraceEnabled())
+                std::fprintf(stderr, "%s\n", message.c_str());
+        }
+
+        template<typename T_Type>
+        void traceTensor(auto& queue, auto const& tensor, std::string_view label, uint32_t sampleCount = 8u)
+        {
+            if(!prefillTraceEnabled())
+                return;
+
+            auto host = alpaka::onHost::allocHost<T_Type>(tensor.getExtents());
+            alpaka::onHost::memcpy(queue, host, tensor);
+            alpaka::onHost::wait(queue);
+
+            std::ostringstream os;
+            os << label << " extents=" << tensor.getExtents();
+
+            auto const extents = host.getExtents();
+            if(ALPAKA_TYPEOF(extents)::dim() == 2u && extents[0] > 0u)
+            {
+                auto const row = static_cast<uint32_t>(extents[0] - 1u);
+                auto const width = static_cast<uint32_t>(extents[1]);
+                auto const keep = std::min(sampleCount, width);
+                T_Type sum{};
+                T_Type maxAbs{};
+                for(uint32_t col = 0u; col < width; ++col)
+                {
+                    auto const value = host[alpaka::Vec{row, col}];
+                    sum += value;
+                    auto const absValue = value < T_Type{} ? -value : value;
+                    if(absValue > maxAbs)
+                        maxAbs = absValue;
+                }
+                os << " row=" << row << " first" << keep << '=';
+                for(uint32_t col = 0u; col < keep; ++col)
+                    os << ' ' << host[alpaka::Vec{row, col}];
+                os << " sum=" << sum << " maxAbs=" << maxAbs;
+            }
+            else
+            {
+                auto it = host.begin();
+                auto const end = host.end();
+                T_Type sum{};
+                T_Type maxAbs{};
+                uint32_t count = 0u;
+                os << " first" << sampleCount << '=';
+                for(; it != end; ++it)
+                {
+                    auto const value = *it;
+                    sum += value;
+                    auto const absValue = value < T_Type{} ? -value : value;
+                    if(absValue > maxAbs)
+                        maxAbs = absValue;
+                    if(count < sampleCount)
+                        os << ' ' << value;
+                    ++count;
+                }
+                os << " sum=" << sum << " maxAbs=" << maxAbs;
+            }
+
+            printTrace(os.str());
+        }
+    } // namespace detail
+
     struct ModelConfig
     {
         uint32_t hiddenSize{};
@@ -182,7 +259,13 @@ namespace alpaka::nn::onHost::model
     }
 
     template<typename T_Model>
-    auto prefill(auto& queue, auto exec, T_Model const& model, std::vector<uint32_t> const& tokenIds, auto& cache)
+    auto prefill(
+        auto& queue,
+        auto exec,
+        T_Model const& model,
+        std::vector<uint32_t> const& tokenIds,
+        auto& cache,
+        std::string_view traceLabel = "prefill")
     {
         using T_Type = typename T_Model::value_type;
         if(tokenIds.empty())
@@ -198,6 +281,7 @@ namespace alpaka::nn::onHost::model
             queue.getDevice(),
             alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.hiddenSize});
         alpaka::nn::onHost::nn::embeddingLookup<T_Type>(queue, exec, devTokens, model.embedding, hidden);
+        detail::traceTensor<T_Type>(queue, hidden, std::string{traceLabel} + " embedding");
 
         auto ropeTables = makeRopeTables<T_Type>(
             queue.getDevice(),
@@ -219,6 +303,7 @@ namespace alpaka::nn::onHost::model
                 ropeTables.second,
                 next);
             hidden = next;
+            detail::traceTensor<T_Type>(queue, hidden, std::string{traceLabel} + " layer " + std::to_string(layer));
         }
 
         auto norm = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
@@ -229,10 +314,12 @@ namespace alpaka::nn::onHost::model
             model.finalNorm,
             norm,
             static_cast<T_Type>(model.config.rmsNormEpsilon));
+        detail::traceTensor<T_Type>(queue, norm, std::string{traceLabel} + " final norm");
         auto logits = alpaka::onHost::alloc<T_Type>(
             queue.getDevice(),
             alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.vocabSize});
         alpaka::nn::onHost::gemm<T_Type>(queue, exec, norm, model.lmHead, logits);
+        detail::traceTensor<T_Type>(queue, logits, std::string{traceLabel} + " full logits");
         auto lastLogits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.vocabSize});
         alpaka::onHost::memcpy(
             queue,
@@ -241,6 +328,7 @@ namespace alpaka::nn::onHost::model
                 alpaka::Vec{static_cast<uint32_t>(tokenIds.size() - 1u), 0u},
                 alpaka::Vec{1u, model.config.vocabSize}));
         alpaka::onHost::wait(queue);
+        detail::traceTensor<T_Type>(queue, lastLogits, std::string{traceLabel} + " last logits");
         return lastLogits;
     }
 
@@ -255,7 +343,7 @@ namespace alpaka::nn::onHost::model
             model.config.numKeyValueHeads,
             static_cast<uint32_t>(tokenIds.size()),
             model.config.hiddenSize / model.config.numHeads);
-        return prefill(queue, exec, model, tokenIds, cache);
+        return prefill(queue, exec, model, tokenIds, cache, "implicit prefill");
     }
 
     template<typename T_Model>

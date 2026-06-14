@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -211,12 +212,31 @@ TEMPLATE_LIST_TEST_CASE("tiny llama implicit and explicit prefill agree", "[mode
     maybePrintDiagnostic(explicitTopLogits);
 
     REQUIRE(hostImplicit.getExtents() == hostExplicit.getExtents());
+    uint32_t mismatchCount = 0u;
+    uint32_t firstMismatchToken = 0u;
+    float firstImplicitValue = 0.0f;
+    float firstExplicitValue = 0.0f;
+    float maxAbsDiff = 0.0f;
     for(uint32_t token = 0u; token < model.config.vocabSize; ++token)
     {
-        alpaka::nn::test::checkValue(
-            hostImplicit[alpaka::Vec{0u, token}],
-            hostExplicit[alpaka::Vec{0u, token}],
-            1.0e-4,
-            1.0e-4);
+        auto const implicitValue = hostImplicit[alpaka::Vec{0u, token}];
+        auto const explicitValue = hostExplicit[alpaka::Vec{0u, token}];
+        auto const absDiff = std::fabs(implicitValue - explicitValue);
+        maxAbsDiff = std::max(maxAbsDiff, absDiff);
+        if(absDiff > 1.0e-4f)
+        {
+            if(mismatchCount == 0u)
+            {
+                firstMismatchToken = token;
+                firstImplicitValue = implicitValue;
+                firstExplicitValue = explicitValue;
+            }
+            ++mismatchCount;
+        }
     }
+    INFO(
+        "mismatchCount=" << mismatchCount << " firstMismatchToken=" << firstMismatchToken
+                         << " implicit=" << firstImplicitValue << " explicit=" << firstExplicitValue
+                         << " maxAbsDiff=" << maxAbsDiff);
+    REQUIRE(mismatchCount == 0u);
 }
