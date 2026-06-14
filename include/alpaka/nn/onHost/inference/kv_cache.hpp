@@ -6,6 +6,7 @@
 #pragma once
 
 #include <alpaka/alpaka.hpp>
+#include <alpaka/nn/onHost/ops/elementwise.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <cstdint>
@@ -85,14 +86,17 @@ namespace alpaka::nn::onHost::inference
                 throw std::out_of_range{"KvCache append exceeded max context."};
             for(uint32_t head = 0u; head < numKeyValueHeads; ++head)
             {
-                alpaka::onHost::memcpy(
-                    queue,
-                    keys.at(layer).getSubView(alpaka::Vec{batch, head, token, 0u}, alpaka::Vec{1u, 1u, 1u, headDim}),
-                    keyToken.getSubView(alpaka::Vec{0u, 0u, head, 0u}, alpaka::Vec{1u, 1u, 1u, headDim}));
-                alpaka::onHost::memcpy(
-                    queue,
-                    values.at(layer).getSubView(alpaka::Vec{batch, head, token, 0u}, alpaka::Vec{1u, 1u, 1u, headDim}),
-                    valueToken.getSubView(alpaka::Vec{0u, 0u, head, 0u}, alpaka::Vec{1u, 1u, 1u, headDim}));
+                auto dstKey
+                    = keys.at(layer).getSubView(alpaka::Vec{batch, head, token, 0u}, alpaka::Vec{1u, 1u, 1u, headDim});
+                auto srcKey
+                    = keyToken.getSubView(alpaka::Vec{0u, 0u, head, 0u}, alpaka::Vec{1u, 1u, 1u, headDim});
+                auto dstValue = values.at(layer).getSubView(
+                    alpaka::Vec{batch, head, token, 0u},
+                    alpaka::Vec{1u, 1u, 1u, headDim});
+                auto srcValue
+                    = valueToken.getSubView(alpaka::Vec{0u, 0u, head, 0u}, alpaka::Vec{1u, 1u, 1u, headDim});
+                alpaka::nn::onHost::ops::copy(queue, exec, srcKey, dstKey);
+                alpaka::nn::onHost::ops::copy(queue, exec, srcValue, dstValue);
             }
             setLength(layer, batch, token + 1u);
         }

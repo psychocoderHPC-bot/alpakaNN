@@ -169,3 +169,54 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decodeStep matches greedy generation", "[mod
     REQUIRE(alpaka::nn::onHost::inference::argmax<float>(hostStepLogits, 0u) == 6074u);
     REQUIRE(cache.length(0u, 0u) == prompt.size() + 1u);
 }
+
+TEMPLATE_LIST_TEST_CASE("tiny llama implicit and explicit prefill agree", "[model][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+
+    auto implicitLogits = alpaka::nn::onHost::model::prefill(queue, exec, model, prompt);
+    auto explicitCache = alpaka::nn::onHost::inference::makeKvCache<float>(
+        device,
+        model.config.numLayers,
+        1u,
+        model.config.numKeyValueHeads,
+        static_cast<uint32_t>(prompt.size() + 2u),
+        model.config.hiddenSize / model.config.numHeads);
+    auto explicitLogits = alpaka::nn::onHost::model::prefill(queue, exec, model, prompt, explicitCache);
+
+    auto hostImplicit = alpaka::onHost::allocHost<float>(implicitLogits.getExtents());
+    auto hostExplicit = alpaka::onHost::allocHost<float>(explicitLogits.getExtents());
+    alpaka::onHost::memcpy(queue, hostImplicit, implicitLogits);
+    alpaka::onHost::memcpy(queue, hostExplicit, explicitLogits);
+    alpaka::onHost::wait(queue);
+
+    auto const implicitTopLogits = formatTopLogits<float>("implicit prefill logits", hostImplicit, 0u);
+    auto const explicitTopLogits = formatTopLogits<float>("explicit prefill logits", hostExplicit, 0u);
+    INFO(implicitTopLogits);
+    INFO(explicitTopLogits);
+    maybePrintDiagnostic(implicitTopLogits);
+    maybePrintDiagnostic(explicitTopLogits);
+
+    REQUIRE(hostImplicit.getExtents() == hostExplicit.getExtents());
+    for(uint32_t token = 0u; token < model.config.vocabSize; ++token)
+    {
+        alpaka::nn::test::checkValue(
+            hostImplicit[alpaka::Vec{0u, token}],
+            hostExplicit[alpaka::Vec{0u, token}],
+            1.0e-4,
+            1.0e-4);
+    }
+}
