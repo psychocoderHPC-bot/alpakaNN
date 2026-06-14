@@ -128,18 +128,20 @@ namespace alpaka::nn::onHost
     namespace internal
     {
         template<typename T>
-        struct CudaDataType;
+        struct CublasTraits;
 
         template<>
-        struct CudaDataType<float>
+        struct CublasTraits<float>
         {
-            static constexpr cudaDataType_t value = CUDA_R_32F;
+            static constexpr cudaDataType_t dataType = CUDA_R_32F;
+            static constexpr cublasComputeType_t computeType = CUBLAS_COMPUTE_32F_PEDANTIC;
         };
 
         template<>
-        struct CudaDataType<double>
+        struct CublasTraits<double>
         {
-            static constexpr cudaDataType_t value = CUDA_R_64F;
+            static constexpr cudaDataType_t dataType = CUDA_R_64F;
+            static constexpr cublasComputeType_t computeType = CUBLAS_COMPUTE_64F_PEDANTIC;
         };
 
         template<alpaka::concepts::DeviceKind T_DeviceKind, typename T_Type>
@@ -164,7 +166,11 @@ namespace alpaka::nn::onHost
 
             auto const callSgemmCUBlas = [&]()
             {
-                constexpr auto cudaType = CudaDataType<T_Type>::value;
+                constexpr auto dataType = CublasTraits<T_Type>::dataType;
+                constexpr auto computeType = CublasTraits<T_Type>::computeType;
+
+                cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH);
+
                 stat = cublasGemmEx(
                     handle,
                     CUBLAS_OP_N,
@@ -174,16 +180,16 @@ namespace alpaka::nn::onHost
                     N,
                     &alpha,
                     B.data(),
-                    cudaType,
+                    dataType,
                     B.getPitches().y() / sizeof(T_Type),
                     A.data(),
-                    cudaType,
+                    dataType,
                     A.getPitches().y() / sizeof(T_Type),
                     &beta,
                     C.data(),
-                    cudaType,
+                    dataType,
                     C.getPitches().y() / sizeof(T_Type),
-                    cudaType,
+                    computeType,
                     CUBLAS_GEMM_DEFAULT);
             };
 
