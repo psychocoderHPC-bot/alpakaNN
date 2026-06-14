@@ -14,10 +14,74 @@
 #include <alpaka/nn/onHost/nn/softmax.hpp>
 #include <alpaka/nn/onHost/ops/elementwise.hpp>
 
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
+#include <sstream>
+#include <string>
+#include <string_view>
 
 namespace alpaka::nn::onHost::inference
 {
+    namespace detail
+    {
+        inline bool blockTraceEnabled()
+        {
+            auto const* env = std::getenv("ALPAKANN_DEBUG_BLOCK_TRACE");
+            return env != nullptr && env[0] != '\0' && env[0] != '0';
+        }
+
+        inline bool skipPrefillCacheAppend()
+        {
+            auto const* env = std::getenv("ALPAKANN_SKIP_PREFILL_CACHE_APPEND");
+            return env != nullptr && env[0] != '\0' && env[0] != '0';
+        }
+
+        inline void printTrace(std::string const& message)
+        {
+            if(blockTraceEnabled())
+                std::fprintf(stderr, "%s\n", message.c_str());
+        }
+
+        template<typename T_Type>
+        void traceTensor(auto& queue, auto const& tensor, std::string_view label, uint32_t sampleCount = 8u)
+        {
+            if(!blockTraceEnabled())
+                return;
+
+            auto host = alpaka::onHost::allocHost<T_Type>(tensor.getExtents());
+            alpaka::onHost::memcpy(queue, host, tensor);
+            alpaka::onHost::wait(queue);
+
+            std::ostringstream os;
+            os << label << " extents=" << tensor.getExtents();
+
+            auto const extents = host.getExtents();
+            if(ALPAKA_TYPEOF(extents)::dim() == 2u && extents[0] > 0u)
+            {
+                auto const row = static_cast<uint32_t>(extents[0] - 1u);
+                auto const width = static_cast<uint32_t>(extents[1]);
+                auto const keep = std::min(sampleCount, width);
+                T_Type sum{};
+                T_Type maxAbs{};
+                for(uint32_t col = 0u; col < width; ++col)
+                {
+                    auto const value = host[alpaka::Vec{row, col}];
+                    sum += value;
+                    auto const absValue = value < T_Type{} ? -value : value;
+                    if(absValue > maxAbs)
+                        maxAbs = absValue;
+                }
+                os << " row=" << row << " first" << keep << '=';
+                for(uint32_t col = 0u; col < keep; ++col)
+                    os << ' ' << host[alpaka::Vec{row, col}];
+                os << " sum=" << sum << " maxAbs=" << maxAbs;
+            }
+            printTrace(os.str());
+        }
+    } // namespace detail
+
     template<typename T_Type, typename T_VectorBuffer, typename T_MatrixBuffer>
     struct TransformerBlockWeights
     {
@@ -114,17 +178,28 @@ namespace alpaka::nn::onHost::inference
         alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, output, weights.rms2Weight, norm2, weights.epsilon);
         alpaka::nn::onHost::nn::mlp<T_Type>(queue, exec, norm2, weights.Wgate, weights.Wup, weights.Wdown, mlpOut);
         alpaka::nn::onHost::ops::add<T_Type>(queue, exec, output, mlpOut, output);
+        detail::traceTensor<T_Type>(
+            queue,
+            output,
+            "transformerBlock layer " + std::to_string(layer) + " output before append");
 
-        for(uint32_t token = 0u; token < tokens; ++token)
+        if(!detail::skipPrefillCacheAppend())
         {
-            auto kToken = k4.getSubView(
-                alpaka::Vec{0u, token, 0u, 0u},
-                alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
-            auto vToken = v4.getSubView(
-                alpaka::Vec{0u, token, 0u, 0u},
-                alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
-            cache.append(queue, exec, layer, 0u, token, kToken, vToken);
+            for(uint32_t token = 0u; token < tokens; ++token)
+            {
+                auto kToken = k4.getSubView(
+                    alpaka::Vec{0u, token, 0u, 0u},
+                    alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
+                auto vToken = v4.getSubView(
+                    alpaka::Vec{0u, token, 0u, 0u},
+                    alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
+                cache.append(queue, exec, layer, 0u, token, kToken, vToken);
+            }
         }
+        detail::traceTensor<T_Type>(
+            queue,
+            output,
+            "transformerBlock layer " + std::to_string(layer) + " output after append");
         alpaka::onHost::wait(queue);
     }
 

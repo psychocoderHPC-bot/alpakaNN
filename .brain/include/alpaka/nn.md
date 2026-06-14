@@ -30,6 +30,7 @@
 - `onHost/inference`
   - KV cache, transformer block, and greedy generation.
   - `generate.hpp` supports `ALPAKANN_DEBUG_TOPK=1` to print per-step top logits and selections during greedy decoding.
+  - `transformer_block.hpp` supports `ALPAKANN_DEBUG_BLOCK_TRACE=1` for before/after-append block summaries and `ALPAKANN_SKIP_PREFILL_CACHE_APPEND=1` to isolate cache-append side effects during prefill.
 - `onHost/model`
   - TinyLlama loader and decoder orchestration.
   - `decoder.hpp` supports `ALPAKANN_DEBUG_PREFILL_TRACE=1` to print per-stage tensor summaries through `prefill`, useful for CUDA divergence tracing between implicit and explicit cache paths.
