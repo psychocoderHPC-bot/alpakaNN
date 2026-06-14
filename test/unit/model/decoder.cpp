@@ -10,15 +10,60 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using TestApis = alpaka::nn::test::TestApis;
 
 namespace
 {
+    template<typename T_Type>
+    std::string formatTopLogits(std::string_view label, auto const& hostLogits, uint32_t row, uint32_t topK = 10u)
+    {
+        auto const vocabSize = static_cast<uint32_t>(hostLogits.getExtents()[1]);
+        std::vector<std::pair<T_Type, uint32_t>> ranked;
+        ranked.reserve(std::min(topK, vocabSize));
+
+        for(uint32_t token = 0u; token < vocabSize; ++token)
+        {
+            auto const value = hostLogits[alpaka::Vec{row, token}];
+            ranked.emplace_back(value, token);
+        }
+
+        auto const keep = std::min<uint32_t>(topK, vocabSize);
+        std::partial_sort(
+            ranked.begin(),
+            ranked.begin() + static_cast<std::ptrdiff_t>(keep),
+            ranked.end(),
+            [](auto const& lhs, auto const& rhs)
+            {
+                if(lhs.first == rhs.first)
+                    return lhs.second < rhs.second;
+                return lhs.first > rhs.first;
+            });
+        ranked.resize(keep);
+
+        std::ostringstream os;
+        os << label << " top-" << keep << ':';
+        for(auto const& [value, token] : ranked)
+            os << " (" << token << ", " << value << ')';
+        return os.str();
+    }
+
+    void maybePrintDiagnostic(std::string const& message)
+    {
+        auto const* env = std::getenv("ALPAKANN_DEBUG_TOPK");
+        if(env == nullptr || env[0] == '\0' || env[0] == '0')
+            return;
+        std::fprintf(stderr, "%s\n", message.c_str());
+    }
+
     std::string ensureTinyModel()
     {
 #ifdef TINY_LLAMA_MODEL_PATH
@@ -68,6 +113,9 @@ TEMPLATE_LIST_TEST_CASE("tiny llama model loads and generates deterministically"
 
     REQUIRE(hostLogits.getExtents()[0] == 1u);
     REQUIRE(hostLogits.getExtents()[1] == model.config.vocabSize);
+    auto const prefillTopLogits = formatTopLogits<float>("prefill logits", hostLogits, 0u);
+    INFO(prefillTopLogits);
+    maybePrintDiagnostic(prefillTopLogits);
 
     auto generated = alpaka::nn::onHost::inference::generateGreedy(queue, exec, model, prompt, 2u);
     REQUIRE(generated.size() == 6u);
@@ -105,6 +153,9 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decodeStep matches greedy generation", "[mod
     auto hostLogits = alpaka::onHost::allocHost<float>(logits.getExtents());
     alpaka::onHost::memcpy(queue, hostLogits, logits);
     alpaka::onHost::wait(queue);
+    auto const prefillTopLogits = formatTopLogits<float>("prefill logits", hostLogits, 0u);
+    INFO(prefillTopLogits);
+    maybePrintDiagnostic(prefillTopLogits);
     auto next = alpaka::nn::onHost::inference::argmax<float>(hostLogits, 0u);
     REQUIRE(next == 25190u);
 
@@ -112,6 +163,9 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decodeStep matches greedy generation", "[mod
     auto hostStepLogits = alpaka::onHost::allocHost<float>(stepLogits.getExtents());
     alpaka::onHost::memcpy(queue, hostStepLogits, stepLogits);
     alpaka::onHost::wait(queue);
+    auto const stepTopLogits = formatTopLogits<float>("decodeStep logits", hostStepLogits, 0u);
+    INFO(stepTopLogits);
+    maybePrintDiagnostic(stepTopLogits);
     REQUIRE(alpaka::nn::onHost::inference::argmax<float>(hostStepLogits, 0u) == 6074u);
     REQUIRE(cache.length(0u, 0u) == prompt.size() + 1u);
 }
