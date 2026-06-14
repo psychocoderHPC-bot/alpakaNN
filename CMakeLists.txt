@@ -21,6 +21,9 @@ option(alpakaNN_BUILD_TESTS "Build alpakaNN unit tests." ${PROJECT_IS_TOP_LEVEL}
 option(alpakaNN_OPENBLAS "Enable OpenBLAS host dispatch for GEMM/GEMV." ON)
 set(alpaka_COMPILE_PEDANTIC ON CACHE BOOL "Compile all code with strict compiler settings." FORCE)
 
+if(alpaka_DEP_HIP)
+    enable_language(HIP)
+endif()
 if(alpaka_DEP_CUDA)
     enable_language(CUDA)
     find_package(CUDAToolkit)
