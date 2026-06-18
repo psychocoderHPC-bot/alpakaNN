@@ -568,3 +568,77 @@ TEMPLATE_LIST_TEST_CASE("tiny llama implicit and explicit prefill agree", "[mode
         INFO(comparePrefillStages<float>(queue, exec, model, prompt));
     REQUIRE(mismatchCount == 0u);
 }
+
+TEMPLATE_LIST_TEST_CASE("tiny llama prefill is independent of cache capacity", "[model][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    std::vector<uint32_t> capacities{4u, 5u, 6u, 7u};
+    std::vector<decltype(alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 1u}))> hostLogitsByCapacity;
+    hostLogitsByCapacity.reserve(capacities.size());
+
+    for(auto capacity : capacities)
+    {
+        auto cache = alpaka::nn::onHost::inference::makeKvCache<float>(
+            device,
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            capacity,
+            model.config.hiddenSize / model.config.numHeads);
+        auto logits = alpaka::nn::onHost::model::prefill(queue, exec, model, prompt, cache);
+        auto hostLogits = alpaka::onHost::allocHost<float>(logits.getExtents());
+        alpaka::onHost::memcpy(queue, hostLogits, logits);
+        alpaka::onHost::wait(queue);
+
+        INFO("capacity=" << capacity << ' ' << formatTopLogits<float>("prefill logits", hostLogits, 0u));
+        hostLogitsByCapacity.push_back(std::move(hostLogits));
+    }
+
+    auto const& reference = hostLogitsByCapacity.front();
+    for(std::size_t idx = 1; idx < hostLogitsByCapacity.size(); ++idx)
+    {
+        auto const& candidate = hostLogitsByCapacity[idx];
+        REQUIRE(reference.getExtents() == candidate.getExtents());
+
+        uint32_t mismatchCount = 0u;
+        uint32_t firstMismatchToken = 0u;
+        float referenceValue = 0.0f;
+        float candidateValue = 0.0f;
+        float maxAbsDiff = 0.0f;
+        for(uint32_t token = 0u; token < model.config.vocabSize; ++token)
+        {
+            auto const left = reference[alpaka::Vec{0u, token}];
+            auto const right = candidate[alpaka::Vec{0u, token}];
+            auto const absDiff = std::fabs(left - right);
+            maxAbsDiff = std::max(maxAbsDiff, absDiff);
+            if(absDiff > 1.0e-4f)
+            {
+                if(mismatchCount == 0u)
+                {
+                    firstMismatchToken = token;
+                    referenceValue = left;
+                    candidateValue = right;
+                }
+                ++mismatchCount;
+            }
+        }
+        INFO(
+            "capacity " << capacities.front() << " vs " << capacities[idx] << " mismatchCount=" << mismatchCount
+                        << " firstMismatchToken=" << firstMismatchToken << " reference=" << referenceValue
+                        << " candidate=" << candidateValue << " maxAbsDiff=" << maxAbsDiff);
+        REQUIRE(mismatchCount == 0u);
+    }
+}
