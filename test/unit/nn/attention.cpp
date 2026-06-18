@@ -832,3 +832,116 @@ TEMPLATE_LIST_TEST_CASE(
     for(auto idx : alpaka::IdxRange{out6.getExtents()})
         alpaka::nn::test::checkValue(out6[idx], out7[idx], 1.0e-5f, 1.0e-5f);
 }
+
+TEMPLATE_LIST_TEST_CASE(
+    "decoder prefill attention flat packed views are independent of spare allocation",
+    "[nn][attention][decoder]",
+    TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    constexpr uint32_t tokens = 4u;
+    constexpr uint32_t heads = 4u;
+    constexpr uint32_t headDim = 4u;
+    constexpr uint32_t hidden = heads * headDim;
+
+    auto runWithSpare = [&](uint32_t spareCapacity)
+    {
+        auto dummy = alpaka::onHost::alloc<float>(device, alpaka::Vec{1u, heads, spareCapacity, headDim});
+        alpaka::unused(dummy);
+
+        auto qStorage = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens * hidden});
+        auto kStorage = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens * hidden});
+        auto vStorage = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens * hidden});
+        auto attnStorage = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens * hidden});
+
+        for(uint32_t i = 0u; i < tokens * hidden; ++i)
+        {
+            qStorage[alpaka::Vec{i}] = 0.125f + static_cast<float>(i) * 0.01f;
+            kStorage[alpaka::Vec{i}] = -0.25f + static_cast<float>(i) * 0.015f;
+            vStorage[alpaka::Vec{i}] = 0.5f - static_cast<float>(i) * 0.0075f;
+        }
+
+        auto q = alpaka::makeView(device, qStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+        auto k = alpaka::makeView(device, kStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+        auto v = alpaka::makeView(device, vStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+
+        auto expectedScores = referenceScoresBTHD<float>(q, k, 1u);
+        scaleTensor(expectedScores, 0.5f);
+        auto expectedProbs = alpaka::onHost::allocHost<float>(expectedScores.getExtents());
+        for(auto idx : alpaka::IdxRange{expectedScores.getExtents()})
+            expectedProbs[idx] = expectedScores[idx];
+        referenceCausalSoftmaxInPlace(expectedProbs);
+        auto expectedOut = referenceApplyBTHD<float>(expectedProbs, v, 1u);
+
+        auto devQStorage = alpaka::onHost::allocLike(device, qStorage);
+        auto devKStorage = alpaka::onHost::allocLike(device, kStorage);
+        auto devVStorage = alpaka::onHost::allocLike(device, vStorage);
+        auto devAttnStorage = alpaka::onHost::allocLike(device, attnStorage);
+        alpaka::onHost::memcpy(queue, devQStorage, qStorage);
+        alpaka::onHost::memcpy(queue, devKStorage, kStorage);
+        alpaka::onHost::memcpy(queue, devVStorage, vStorage);
+
+        auto devQ = alpaka::makeView(device, devQStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+        auto devK = alpaka::makeView(device, devKStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+        auto devV = alpaka::makeView(device, devVStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+        auto devAttn = alpaka::makeView(device, devAttnStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+
+        auto scores = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, heads, tokens, tokens});
+        auto probs = alpaka::onHost::allocHost<float>(scores.getExtents());
+        auto devScores = alpaka::onHost::allocLike(device, scores);
+        auto devProbs = alpaka::onHost::allocLike(device, probs);
+
+        alpaka::nn::onHost::nn::attentionScores<float>(
+            queue,
+            exec,
+            devQ,
+            devK,
+            devScores,
+            1u,
+            alpaka::nn::AttentionKvLayout::BTHD);
+        alpaka::nn::onHost::ops::scale<float>(queue, exec, devScores, 0.5f, devScores);
+        alpaka::nn::onHost::nn::causalSoftmax<float>(queue, exec, devScores, devProbs, 3u, 2u, 3u);
+        alpaka::nn::onHost::nn::attentionApply<float>(
+            queue,
+            exec,
+            devProbs,
+            devV,
+            devAttn,
+            1u,
+            alpaka::nn::AttentionKvLayout::BTHD);
+
+        alpaka::onHost::memcpy(queue, scores, devScores);
+        alpaka::onHost::memcpy(queue, probs, devProbs);
+        alpaka::onHost::memcpy(queue, attnStorage, devAttnStorage);
+        alpaka::onHost::wait(queue);
+
+        for(auto idx : alpaka::IdxRange{scores.getExtents()})
+            alpaka::nn::test::checkValue(scores[idx], expectedScores[idx], 1.0e-5f, 1.0e-5f);
+        for(auto idx : alpaka::IdxRange{probs.getExtents()})
+            alpaka::nn::test::checkValue(probs[idx], expectedProbs[idx], 1.0e-5f, 1.0e-5f);
+
+        auto attn2d = alpaka::makeView(device, attnStorage.data(), alpaka::Vec{tokens, hidden});
+        return std::tuple{attnStorage, expectedOut, attn2d};
+    };
+
+    auto [attn4, expected4, attn2d4] = runWithSpare(4u);
+    auto [attn5, expected5, attn2d5] = runWithSpare(5u);
+    alpaka::unused(attn2d4);
+    alpaka::unused(attn2d5);
+
+    for(auto idx : alpaka::IdxRange{expected4.getExtents()})
+        alpaka::nn::test::checkValue(expected4[idx], expected5[idx], 1.0e-5f, 1.0e-5f);
+
+    for(uint32_t i = 0u; i < tokens * hidden; ++i)
+        alpaka::nn::test::checkValue(attn4[alpaka::Vec{i}], attn5[alpaka::Vec{i}], 1.0e-5f, 1.0e-5f);
+}
