@@ -156,6 +156,11 @@ namespace alpaka::nn::onHost
         {
             cublasHandle_t handle;
             cublasStatus_t stat = cublasCreate(&handle);
+            if(stat != CUBLAS_STATUS_SUCCESS)
+            {
+                throw std::invalid_argument(
+                    "cublasCreate failed with error code: " + std::to_string(static_cast<int>(stat)));
+            }
             cublasSetStream(handle, queue.getNativeHandle());
 
             int M = A.getExtents().y();
@@ -164,43 +169,40 @@ namespace alpaka::nn::onHost
             T_Type alpha = 1;
             T_Type beta = 0;
 
-            auto const callSgemmCUBlas = [&]()
-            {
-                constexpr auto dataType = CublasTraits<T_Type>::dataType;
-                constexpr auto computeType = CublasTraits<T_Type>::computeType;
+            constexpr auto dataType = CublasTraits<T_Type>::dataType;
+            constexpr auto computeType = CublasTraits<T_Type>::computeType;
 
-                cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH);
+            cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH);
 
-                stat = cublasGemmEx(
-                    handle,
-                    CUBLAS_OP_N,
-                    CUBLAS_OP_N,
-                    K,
-                    M,
-                    N,
-                    &alpha,
-                    B.data(),
-                    dataType,
-                    B.getPitches().y() / sizeof(T_Type),
-                    A.data(),
-                    dataType,
-                    A.getPitches().y() / sizeof(T_Type),
-                    &beta,
-                    C.data(),
-                    dataType,
-                    C.getPitches().y() / sizeof(T_Type),
-                    computeType,
-                    CUBLAS_GEMM_DEFAULT);
-            };
+            stat = cublasGemmEx(
+                handle,
+                CUBLAS_OP_N,
+                CUBLAS_OP_N,
+                K,
+                M,
+                N,
+                &alpha,
+                B.data(),
+                dataType,
+                B.getPitches().y() / sizeof(T_Type),
+                A.data(),
+                dataType,
+                A.getPitches().y() / sizeof(T_Type),
+                &beta,
+                C.data(),
+                dataType,
+                C.getPitches().y() / sizeof(T_Type),
+                computeType,
+                CUBLAS_GEMM_DEFAULT);
+
+            cublasStatus_t destroyStat = cublasDestroy(handle);
+            alpaka::unused(destroyStat);
 
             if(stat != CUBLAS_STATUS_SUCCESS)
             {
                 throw std::invalid_argument(
-                    "cublasSgemm failed with error code: " + std::to_string(static_cast<int>(stat)));
+                    "cublasGemmEx failed with error code: " + std::to_string(static_cast<int>(stat)));
             }
-
-            // warmup call CUBlas, result is used for validation
-            callSgemmCUBlas();
         }
     } // namespace internal
 } // namespace alpaka::nn::onHost
