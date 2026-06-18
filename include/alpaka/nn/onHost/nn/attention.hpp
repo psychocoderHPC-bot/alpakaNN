@@ -62,6 +62,8 @@ namespace alpaka::nn::onHost::nn
         uint32_t queriesPerKvGroup = 1u,
         alpaka::nn::AttentionKvLayout kvLayout = alpaka::nn::AttentionKvLayout::BTHD)
     {
+        if(queriesPerKvGroup == 0u)
+            throw std::invalid_argument{"attentionScores requires queriesPerKvGroup > 0."};
         if(detail::attentionTraceEnabled())
         {
             std::ostringstream os;
@@ -70,8 +72,12 @@ namespace alpaka::nn::onHost::nn
                << (kvLayout == alpaka::nn::AttentionKvLayout::BTHD ? "BTHD" : "BHTD");
             detail::printTrace(os.str());
         }
+        auto const scoreExtents = scores.getExtents();
+        auto const totalElements
+            = static_cast<uint32_t>(scoreExtents[0]) * static_cast<uint32_t>(scoreExtents[1])
+              * static_cast<uint32_t>(scoreExtents[2]) * static_cast<uint32_t>(scoreExtents[3]);
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, scores.getExtents()),
+            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, alpaka::Vec{totalElements}),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::AttentionScoresKernel<T_Type>{queriesPerKvGroup, kvLayout},
                 scores,
@@ -89,6 +95,8 @@ namespace alpaka::nn::onHost::nn
         uint32_t queriesPerKvGroup = 1u,
         alpaka::nn::AttentionKvLayout kvLayout = alpaka::nn::AttentionKvLayout::BTHD)
     {
+        if(queriesPerKvGroup == 0u)
+            throw std::invalid_argument{"attentionApply requires queriesPerKvGroup > 0."};
         if(detail::attentionTraceEnabled())
         {
             std::ostringstream os;
@@ -97,8 +105,11 @@ namespace alpaka::nn::onHost::nn
                << (kvLayout == alpaka::nn::AttentionKvLayout::BTHD ? "BTHD" : "BHTD");
             detail::printTrace(os.str());
         }
+        auto const outExtents = out.getExtents();
+        auto const totalElements = static_cast<uint32_t>(outExtents[0]) * static_cast<uint32_t>(outExtents[1])
+                                   * static_cast<uint32_t>(outExtents[2]) * static_cast<uint32_t>(outExtents[3]);
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, out.getExtents()),
+            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, alpaka::Vec{totalElements}),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::AttentionApplyKernel<T_Type>{queriesPerKvGroup, kvLayout},
                 out,

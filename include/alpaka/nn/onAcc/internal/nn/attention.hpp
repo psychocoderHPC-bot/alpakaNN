@@ -12,6 +12,29 @@
 
 namespace alpaka::nn::onAcc::internal::nn
 {
+    namespace detail
+    {
+        template<typename T_Extents>
+        ALPAKA_FN_ACC auto flattenExtent(T_Extents const& extents)
+        {
+            return static_cast<uint32_t>(extents[0]) * static_cast<uint32_t>(extents[1])
+                   * static_cast<uint32_t>(extents[2]) * static_cast<uint32_t>(extents[3]);
+        }
+
+        template<typename T_Extents>
+        ALPAKA_FN_ACC auto unflatten4D(uint32_t linearIdx, T_Extents const& extents)
+        {
+            auto idx3 = linearIdx % static_cast<uint32_t>(extents[3]);
+            linearIdx /= static_cast<uint32_t>(extents[3]);
+            auto idx2 = linearIdx % static_cast<uint32_t>(extents[2]);
+            linearIdx /= static_cast<uint32_t>(extents[2]);
+            auto idx1 = linearIdx % static_cast<uint32_t>(extents[1]);
+            linearIdx /= static_cast<uint32_t>(extents[1]);
+            auto idx0 = linearIdx;
+            return alpaka::Vec{idx0, idx1, idx2, idx3};
+        }
+    } // namespace detail
+
     template<typename T_Type>
     struct AttentionScoresKernel
     {
@@ -20,11 +43,14 @@ namespace alpaka::nn::onAcc::internal::nn
 
         ALPAKA_FN_ACC void operator()(auto const& acc, auto scores, auto q, auto k) const
         {
-            for(auto idx : alpaka::onAcc::makeIdxMap(
+            auto const scoreExtents = scores.getExtents();
+            auto const totalElements = detail::flattenExtent(scoreExtents);
+            for(auto linearIdx : alpaka::onAcc::makeIdxMap(
                     acc,
                     alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{scores.getExtents()}))
+                    alpaka::IdxRange{alpaka::Vec{totalElements}}))
             {
+                auto const idx = detail::unflatten4D(static_cast<uint32_t>(linearIdx[0]), scoreExtents);
                 T_Type sum{};
                 auto const queryHead = static_cast<uint32_t>(idx[1]);
                 auto const kvHead = queryHead / queriesPerKvGroup;
@@ -48,11 +74,14 @@ namespace alpaka::nn::onAcc::internal::nn
 
         ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto probs, auto values) const
         {
-            for(auto idx : alpaka::onAcc::makeIdxMap(
+            auto const outExtents = out.getExtents();
+            auto const totalElements = detail::flattenExtent(outExtents);
+            for(auto linearIdx : alpaka::onAcc::makeIdxMap(
                     acc,
                     alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{out.getExtents()}))
+                    alpaka::IdxRange{alpaka::Vec{totalElements}}))
             {
+                auto const idx = detail::unflatten4D(static_cast<uint32_t>(linearIdx[0]), outExtents);
                 T_Type sum{};
                 auto const queryHead = static_cast<uint32_t>(idx[2]);
                 auto const kvHead = queryHead / queriesPerKvGroup;
