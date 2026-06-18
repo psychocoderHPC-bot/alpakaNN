@@ -32,16 +32,21 @@ namespace alpaka::nn::onAcc::internal::nn
         ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto input) const
         {
             auto const axisExtent = static_cast<uint32_t>(input.getExtents()[axis]);
-            for(auto idx : alpaka::onAcc::makeIdxMap(
+            auto const extents = out.getExtents();
+            auto iterExtents = extents;
+            iterExtents[axis] = 1u;
+
+            for(auto iterIdx : alpaka::onAcc::makeIdxMap(
                     acc,
                     alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{out.getExtents()}))
+                    alpaka::IdxRange{iterExtents}))
             {
-                auto probe = idx;
+                auto probe = iterIdx;
+
                 T_Type maxValue = std::numeric_limits<T_Type>::lowest();
                 for(uint32_t i = 0u; i < axisExtent; ++i)
                 {
-                    if(masked(idx, i))
+                    if(masked(iterIdx, i))
                         continue;
                     probe[axis] = i;
                     maxValue = alpaka::math::max(maxValue, input[probe]);
@@ -51,7 +56,7 @@ namespace alpaka::nn::onAcc::internal::nn
                 for(uint32_t i = 0u; i < axisExtent; ++i)
                 {
                     probe[axis] = i;
-                    if(masked(idx, i))
+                    if(masked(iterIdx, i))
                     {
                         out[probe] = T_Type{};
                         continue;
@@ -64,7 +69,7 @@ namespace alpaka::nn::onAcc::internal::nn
                 for(uint32_t i = 0u; i < axisExtent; ++i)
                 {
                     probe[axis] = i;
-                    if(!masked(idx, i))
+                    if(!masked(iterIdx, i))
                         out[probe] = out[probe] / sum;
                 }
             }
@@ -79,12 +84,16 @@ namespace alpaka::nn::onAcc::internal::nn
         ALPAKA_FN_ACC void operator()(auto const& acc, auto out, auto input, auto mask) const
         {
             auto const axisExtent = static_cast<uint32_t>(input.getExtents()[axis]);
-            for(auto idx : alpaka::onAcc::makeIdxMap(
+            auto const extents = out.getExtents();
+            auto iterExtents = extents;
+            iterExtents[axis] = 1u;
+
+            for(auto iterIdx : alpaka::onAcc::makeIdxMap(
                     acc,
                     alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{out.getExtents()}))
+                    alpaka::IdxRange{iterExtents}))
             {
-                auto probe = idx;
+                auto probe = iterIdx;
                 T_Type maxValue = std::numeric_limits<T_Type>::lowest();
                 for(uint32_t i = 0u; i < axisExtent; ++i)
                 {
