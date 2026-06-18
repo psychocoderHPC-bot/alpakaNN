@@ -8,14 +8,87 @@
 #include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onHost/internal/launch.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace alpaka::nn::onHost::inference
 {
     namespace detail
     {
+        inline bool cacheTraceEnabled()
+        {
+            auto const* env = std::getenv("ALPAKANN_DEBUG_CACHE_TRACE");
+            return env != nullptr && env[0] != '\0' && env[0] != '0';
+        }
+
+        inline bool cacheVerifyEnabled()
+        {
+            auto const* env = std::getenv("ALPAKANN_DEBUG_CACHE_VERIFY");
+            return env != nullptr && env[0] != '\0' && env[0] != '0';
+        }
+
+        inline void cachePrintTrace(std::string const& message)
+        {
+            if(cacheTraceEnabled() || cacheVerifyEnabled())
+                std::fprintf(stderr, "%s\n", message.c_str());
+        }
+
+        template<typename T_Type>
+        void traceTokenCompare(
+            auto& queue,
+            auto const& source,
+            auto const& target,
+            std::string const& label,
+            T_Type tolerance = static_cast<T_Type>(1.0e-5))
+        {
+            if(!cacheVerifyEnabled())
+                return;
+
+            auto hostSource = alpaka::onHost::allocHost<T_Type>(source.getExtents());
+            auto hostTarget = alpaka::onHost::allocHost<T_Type>(target.getExtents());
+            alpaka::onHost::memcpy(queue, hostSource, source);
+            alpaka::onHost::memcpy(queue, hostTarget, target);
+            alpaka::onHost::wait(queue);
+
+            uint32_t mismatchCount = 0u;
+            float maxAbsDiff = 0.0f;
+            std::string firstIdx = "n/a";
+            T_Type firstSource{};
+            T_Type firstTarget{};
+            for(auto idx : alpaka::IdxRange{hostSource.getExtents()})
+            {
+                auto const lhs = hostSource[idx];
+                auto const rhs = hostTarget[idx];
+                auto const diff = static_cast<float>(std::fabs(static_cast<double>(lhs - rhs)));
+                maxAbsDiff = std::max(maxAbsDiff, diff);
+                if(diff > static_cast<float>(tolerance))
+                {
+                    if(mismatchCount == 0u)
+                    {
+                        std::ostringstream idxStream;
+                        idxStream << idx;
+                        firstIdx = idxStream.str();
+                        firstSource = lhs;
+                        firstTarget = rhs;
+                    }
+                    ++mismatchCount;
+                }
+            }
+
+            std::ostringstream os;
+            os << label << " mismatchCount=" << mismatchCount << " maxAbsDiff=" << maxAbsDiff;
+            if(mismatchCount != 0u)
+                os << " firstIdx=" << firstIdx << " src=" << firstSource << " dst=" << firstTarget;
+            cachePrintTrace(os.str());
+        }
+
         template<typename T_Type>
         struct CacheAppendTokenKernel
         {
@@ -105,6 +178,13 @@ namespace alpaka::nn::onHost::inference
                 throw std::invalid_argument{"KvCache append shape mismatch."};
             if(token >= maxContext)
                 throw std::out_of_range{"KvCache append exceeded max context."};
+            if(detail::cacheTraceEnabled() || detail::cacheVerifyEnabled())
+            {
+                std::ostringstream os;
+                os << "kv append layer=" << layer << " batch=" << batch << " token=" << token
+                   << " keyExtents=" << keyToken.getExtents() << " cacheExtents=" << keys.at(layer).getExtents();
+                detail::cachePrintTrace(os.str());
+            }
             queue.enqueue(
                 alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, keyToken.getExtents()),
                 alpaka::KernelBundle{detail::CacheAppendTokenKernel<T_Type>{batch, token}, keys.at(layer), keyToken});
@@ -115,6 +195,25 @@ namespace alpaka::nn::onHost::inference
                     values.at(layer),
                     valueToken});
             setLength(layer, batch, token + 1u);
+            if(detail::cacheVerifyEnabled())
+            {
+                auto keySlice = keys.at(layer).getSubView(
+                    alpaka::Vec{batch, 0u, token, 0u},
+                    alpaka::Vec{1u, numKeyValueHeads, 1u, headDim});
+                auto valueSlice = values.at(layer).getSubView(
+                    alpaka::Vec{batch, 0u, token, 0u},
+                    alpaka::Vec{1u, numKeyValueHeads, 1u, headDim});
+                detail::traceTokenCompare<T_Type>(
+                    queue,
+                    keyToken,
+                    keySlice,
+                    "kv append verify keys layer=" + std::to_string(layer) + " token=" + std::to_string(token));
+                detail::traceTokenCompare<T_Type>(
+                    queue,
+                    valueToken,
+                    valueSlice,
+                    "kv append verify values layer=" + std::to_string(layer) + " token=" + std::to_string(token));
+            }
         }
 
         auto getKeys(uint32_t layer, uint32_t batch, uint32_t tokenCount) const

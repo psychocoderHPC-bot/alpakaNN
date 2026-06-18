@@ -13,10 +13,28 @@
 #include <alpaka/nn/onHost/nn/softmax.hpp>
 #include <alpaka/nn/onHost/ops/elementwise.hpp>
 
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
 #include <cstdint>
 
 namespace alpaka::nn::onHost::nn
 {
+    namespace detail
+    {
+        inline bool attentionTraceEnabled()
+        {
+            auto const* env = std::getenv("ALPAKANN_DEBUG_ATTENTION_TRACE");
+            return env != nullptr && env[0] != '\0' && env[0] != '0';
+        }
+
+        inline void printTrace(std::string const& message)
+        {
+            if(attentionTraceEnabled())
+                std::fprintf(stderr, "%s\n", message.c_str());
+        }
+    } // namespace detail
+
     template<typename T_Type>
     void qkvProjection(
         auto& queue,
@@ -44,6 +62,14 @@ namespace alpaka::nn::onHost::nn
         uint32_t queriesPerKvGroup = 1u,
         alpaka::nn::AttentionKvLayout kvLayout = alpaka::nn::AttentionKvLayout::BTHD)
     {
+        if(detail::attentionTraceEnabled())
+        {
+            std::ostringstream os;
+            os << "attentionScores q=" << Q.getExtents() << " k=" << K.getExtents() << " scores=" << scores.getExtents()
+               << " queriesPerKvGroup=" << queriesPerKvGroup << " layout="
+               << (kvLayout == alpaka::nn::AttentionKvLayout::BTHD ? "BTHD" : "BHTD");
+            detail::printTrace(os.str());
+        }
         queue.enqueue(
             alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, scores.getExtents()),
             alpaka::KernelBundle{
@@ -63,6 +89,14 @@ namespace alpaka::nn::onHost::nn
         uint32_t queriesPerKvGroup = 1u,
         alpaka::nn::AttentionKvLayout kvLayout = alpaka::nn::AttentionKvLayout::BTHD)
     {
+        if(detail::attentionTraceEnabled())
+        {
+            std::ostringstream os;
+            os << "attentionApply probs=" << probs.getExtents() << " values=" << values.getExtents()
+               << " out=" << out.getExtents() << " queriesPerKvGroup=" << queriesPerKvGroup << " layout="
+               << (kvLayout == alpaka::nn::AttentionKvLayout::BTHD ? "BTHD" : "BHTD");
+            detail::printTrace(os.str());
+        }
         queue.enqueue(
             alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, out.getExtents()),
             alpaka::KernelBundle{

@@ -274,6 +274,18 @@ namespace alpaka::nn::onHost::model
         auto hostTokens = alpaka::onHost::allocHost<uint32_t>(static_cast<uint32_t>(tokenIds.size()));
         for(uint32_t i = 0u; i < tokenIds.size(); ++i)
             hostTokens[alpaka::Vec{i}] = tokenIds[i];
+        if(detail::prefillTraceEnabled())
+        {
+            std::ostringstream os;
+            os << traceLabel << " tokens=";
+            for(uint32_t i = 0u; i < tokenIds.size(); ++i)
+                os << (i == 0u ? "[" : ",") << tokenIds[i];
+            os << "] cacheLengths=";
+            for(uint32_t layer = 0u; layer < model.config.numLayers; ++layer)
+                os << (layer == 0u ? "[" : ",") << cache.length(layer, 0u);
+            os << "]";
+            detail::printTrace(os.str());
+        }
         auto devTokens = alpaka::onHost::allocLike(queue.getDevice(), hostTokens);
         alpaka::onHost::memcpy(queue, devTokens, hostTokens);
 
@@ -350,6 +362,15 @@ namespace alpaka::nn::onHost::model
     auto decodeStep(auto& queue, auto exec, T_Model const& model, auto& cache, uint32_t tokenId)
     {
         using T_Type = typename T_Model::value_type;
+        if(detail::prefillTraceEnabled())
+        {
+            std::ostringstream os;
+            os << "decodeStep tokenId=" << tokenId << " cacheLengths=";
+            for(uint32_t layer = 0u; layer < model.config.numLayers; ++layer)
+                os << (layer == 0u ? "[" : ",") << cache.length(layer, 0u);
+            os << "]";
+            detail::printTrace(os.str());
+        }
 
         auto hostToken = alpaka::onHost::allocHost<uint32_t>(1u);
         hostToken[alpaka::Vec{0u}] = tokenId;

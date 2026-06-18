@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -63,6 +64,200 @@ namespace
         if(env == nullptr || env[0] == '\0' || env[0] == '0')
             return;
         std::fprintf(stderr, "%s\n", message.c_str());
+    }
+
+    bool prefillCompareEnabled()
+    {
+        auto const* env = std::getenv("ALPAKANN_DEBUG_PREFILL_COMPARE");
+        return env != nullptr && env[0] != '\0' && env[0] != '0';
+    }
+
+    template<typename T_Type>
+    struct StageSnapshot
+    {
+        std::string label;
+        uint32_t rows{};
+        uint32_t cols{};
+        std::vector<T_Type> values;
+    };
+
+    template<typename T_Type>
+    StageSnapshot<T_Type> captureStage(auto& queue, auto const& tensor, std::string label)
+    {
+        auto host = alpaka::onHost::allocHost<T_Type>(tensor.getExtents());
+        alpaka::onHost::memcpy(queue, host, tensor);
+        alpaka::onHost::wait(queue);
+
+        StageSnapshot<T_Type> snapshot;
+        snapshot.label = std::move(label);
+        snapshot.rows = static_cast<uint32_t>(host.getExtents()[0]);
+        snapshot.cols = static_cast<uint32_t>(host.getExtents()[1]);
+        snapshot.values.reserve(static_cast<std::size_t>(snapshot.rows) * static_cast<std::size_t>(snapshot.cols));
+        for(uint32_t row = 0u; row < snapshot.rows; ++row)
+            for(uint32_t col = 0u; col < snapshot.cols; ++col)
+                snapshot.values.push_back(host[alpaka::Vec{row, col}]);
+        return snapshot;
+    }
+
+    template<typename T_Type>
+    std::vector<StageSnapshot<T_Type>> runPrefillStages(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& tokenIds,
+        auto& cache,
+        std::string const& labelPrefix)
+    {
+        std::vector<StageSnapshot<T_Type>> stages;
+
+        auto hostTokens = alpaka::onHost::allocHost<uint32_t>(static_cast<uint32_t>(tokenIds.size()));
+        for(uint32_t i = 0u; i < tokenIds.size(); ++i)
+            hostTokens[alpaka::Vec{i}] = tokenIds[i];
+        auto devTokens = alpaka::onHost::allocLike(queue.getDevice(), hostTokens);
+        alpaka::onHost::memcpy(queue, devTokens, hostTokens);
+
+        auto hidden = alpaka::onHost::alloc<T_Type>(
+            queue.getDevice(),
+            alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.hiddenSize});
+        alpaka::nn::onHost::nn::embeddingLookup<T_Type>(queue, exec, devTokens, model.embedding, hidden);
+        stages.push_back(captureStage<T_Type>(queue, hidden, labelPrefix + " embedding"));
+
+        auto ropeTables = alpaka::nn::onHost::model::makeRopeTables<T_Type>(
+            queue.getDevice(),
+            static_cast<uint32_t>(tokenIds.size()),
+            model.config.hiddenSize / model.config.numHeads / 2u,
+            static_cast<T_Type>(model.config.ropeTheta));
+
+        for(uint32_t layer = 0u; layer < model.config.numLayers; ++layer)
+        {
+            auto next = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
+            alpaka::nn::onHost::inference::transformerBlock<T_Type>(
+                queue,
+                exec,
+                hidden,
+                model.layers[layer],
+                cache,
+                layer,
+                ropeTables.first,
+                ropeTables.second,
+                next);
+            hidden = next;
+            stages.push_back(
+                captureStage<T_Type>(queue, hidden, labelPrefix + " layer " + std::to_string(layer) + " output"));
+        }
+
+        auto norm = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
+        alpaka::nn::onHost::nn::rmsNorm<T_Type>(
+            queue,
+            exec,
+            hidden,
+            model.finalNorm,
+            norm,
+            static_cast<T_Type>(model.config.rmsNormEpsilon));
+        stages.push_back(captureStage<T_Type>(queue, norm, labelPrefix + " final norm"));
+
+        auto logits = alpaka::onHost::alloc<T_Type>(
+            queue.getDevice(),
+            alpaka::Vec{static_cast<uint32_t>(tokenIds.size()), model.config.vocabSize});
+        alpaka::nn::onHost::gemm<T_Type>(queue, exec, norm, model.lmHead, logits);
+        stages.push_back(captureStage<T_Type>(queue, logits, labelPrefix + " full logits"));
+
+        auto lastLogits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.vocabSize});
+        alpaka::onHost::memcpy(
+            queue,
+            lastLogits,
+            logits.getSubView(
+                alpaka::Vec{static_cast<uint32_t>(tokenIds.size() - 1u), 0u},
+                alpaka::Vec{1u, model.config.vocabSize}));
+        alpaka::onHost::wait(queue);
+        stages.push_back(captureStage<T_Type>(queue, lastLogits, labelPrefix + " last logits"));
+        return stages;
+    }
+
+    template<typename T_Type>
+    std::string summarizeStageDiff(StageSnapshot<T_Type> const& lhs, StageSnapshot<T_Type> const& rhs, T_Type tolerance)
+    {
+        std::ostringstream os;
+        os << lhs.label << " vs " << rhs.label;
+        if(lhs.rows != rhs.rows || lhs.cols != rhs.cols)
+        {
+            os << " shapeMismatch lhs=(" << lhs.rows << "," << lhs.cols << ") rhs=(" << rhs.rows << "," << rhs.cols
+               << ")";
+            return os.str();
+        }
+
+        uint32_t mismatchCount = 0u;
+        uint32_t firstRow = 0u;
+        uint32_t firstCol = 0u;
+        T_Type firstLhs{};
+        T_Type firstRhs{};
+        double maxAbsDiff = 0.0;
+        double meanAbsDiff = 0.0;
+        for(std::size_t idx = 0; idx < lhs.values.size(); ++idx)
+        {
+            auto const left = lhs.values[idx];
+            auto const right = rhs.values[idx];
+            auto const absDiff = std::fabs(static_cast<double>(left - right));
+            meanAbsDiff += absDiff;
+            maxAbsDiff = std::max(maxAbsDiff, absDiff);
+            if(absDiff > static_cast<double>(tolerance))
+            {
+                if(mismatchCount == 0u)
+                {
+                    firstRow = static_cast<uint32_t>(idx / lhs.cols);
+                    firstCol = static_cast<uint32_t>(idx % lhs.cols);
+                    firstLhs = left;
+                    firstRhs = right;
+                }
+                ++mismatchCount;
+            }
+        }
+        if(!lhs.values.empty())
+            meanAbsDiff /= static_cast<double>(lhs.values.size());
+        os << " mismatchCount=" << mismatchCount << " maxAbsDiff=" << maxAbsDiff << " meanAbsDiff=" << meanAbsDiff;
+        if(mismatchCount != 0u)
+            os << " firstMismatch=(" << firstRow << "," << firstCol << ") lhs=" << firstLhs << " rhs=" << firstRhs;
+        return os.str();
+    }
+
+    template<typename T_Type>
+    std::string comparePrefillStages(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& prompt)
+    {
+        auto implicitCache = alpaka::nn::onHost::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            static_cast<uint32_t>(prompt.size()),
+            model.config.hiddenSize / model.config.numHeads);
+        auto explicitCache = alpaka::nn::onHost::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            static_cast<uint32_t>(prompt.size() + 2u),
+            model.config.hiddenSize / model.config.numHeads);
+
+        auto implicitStages = runPrefillStages<T_Type>(queue, exec, model, prompt, implicitCache, "implicit");
+        auto explicitStages = runPrefillStages<T_Type>(queue, exec, model, prompt, explicitCache, "explicit");
+        auto const stageCount = std::min(implicitStages.size(), explicitStages.size());
+        for(std::size_t stage = 0; stage < stageCount; ++stage)
+        {
+            auto summary = summarizeStageDiff(implicitStages[stage], explicitStages[stage], static_cast<T_Type>(1.0e-4));
+            if(summary.find("mismatchCount=0") == std::string::npos)
+                return "first divergent stage: " + summary;
+        }
+        if(implicitStages.size() != explicitStages.size())
+        {
+            std::ostringstream os;
+            os << "stage count mismatch implicit=" << implicitStages.size() << " explicit=" << explicitStages.size();
+            return os.str();
+        }
+        return "all captured prefill stages matched";
     }
 
     std::string ensureTinyModel()
@@ -238,5 +433,7 @@ TEMPLATE_LIST_TEST_CASE("tiny llama implicit and explicit prefill agree", "[mode
         "mismatchCount=" << mismatchCount << " firstMismatchToken=" << firstMismatchToken
                          << " implicit=" << firstImplicitValue << " explicit=" << firstExplicitValue
                          << " maxAbsDiff=" << maxAbsDiff);
+    if(prefillCompareEnabled() || mismatchCount != 0u)
+        INFO(comparePrefillStages<float>(queue, exec, model, prompt));
     REQUIRE(mismatchCount == 0u);
 }
