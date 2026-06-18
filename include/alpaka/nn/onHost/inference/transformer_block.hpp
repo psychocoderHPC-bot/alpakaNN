@@ -195,13 +195,18 @@ namespace alpaka::nn::onHost::inference
         auto& output)
     {
         auto norm1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
-        auto q = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto const tokens = static_cast<uint32_t>(input.getExtents()[0]);
+        auto const hiddenWidth = static_cast<uint32_t>(input.getExtents()[1]);
         auto const kvWidth = weights.numKeyValueHeads * weights.headDim;
         auto const queriesPerKvGroup = weights.numHeads / weights.numKeyValueHeads;
-        auto k = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens, kvWidth});
-        auto v = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens, kvWidth});
-        auto attn = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto qStorage = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens * hiddenWidth});
+        auto kStorage = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens * kvWidth});
+        auto vStorage = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens * kvWidth});
+        auto attnStorage = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens * hiddenWidth});
+        auto q = alpaka::makeView(queue.getDevice(), qStorage.data(), alpaka::Vec{tokens, hiddenWidth});
+        auto k = alpaka::makeView(queue.getDevice(), kStorage.data(), alpaka::Vec{tokens, kvWidth});
+        auto v = alpaka::makeView(queue.getDevice(), vStorage.data(), alpaka::Vec{tokens, kvWidth});
+        auto attn = alpaka::makeView(queue.getDevice(), attnStorage.data(), alpaka::Vec{tokens, hiddenWidth});
         auto proj = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto residual1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto norm2 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
@@ -216,15 +221,15 @@ namespace alpaka::nn::onHost::inference
 
         auto q4 = alpaka::makeView(
             queue.getDevice(),
-            q.data(),
+            qStorage.data(),
             alpaka::Vec{1u, tokens, weights.numHeads, weights.headDim});
         auto k4 = alpaka::makeView(
             queue.getDevice(),
-            k.data(),
+            kStorage.data(),
             alpaka::Vec{1u, tokens, weights.numKeyValueHeads, weights.headDim});
         auto v4 = alpaka::makeView(
             queue.getDevice(),
-            v.data(),
+            vStorage.data(),
             alpaka::Vec{1u, tokens, weights.numKeyValueHeads, weights.headDim});
         alpaka::nn::onHost::nn::ropeInPlace<T_Type>(queue, exec, q4, ropeCos, ropeSin);
         alpaka::nn::onHost::nn::ropeInPlace<T_Type>(queue, exec, k4, ropeCos, ropeSin);
@@ -236,7 +241,7 @@ namespace alpaka::nn::onHost::inference
         auto probs = alpaka::onHost::alloc<T_Type>(queue.getDevice(), scores.getExtents());
         auto attn4 = alpaka::makeView(
             queue.getDevice(),
-            attn.data(),
+            attnStorage.data(),
             alpaka::Vec{1u, tokens, weights.numHeads, weights.headDim});
 
         alpaka::nn::onHost::nn::attentionScores<T_Type>(
@@ -324,12 +329,17 @@ namespace alpaka::nn::onHost::inference
         auto& output)
     {
         auto norm1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
-        auto q = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto const hiddenWidth = static_cast<uint32_t>(input.getExtents()[1]);
         auto const kvWidth = weights.numKeyValueHeads * weights.headDim;
         auto const queriesPerKvGroup = weights.numHeads / weights.numKeyValueHeads;
-        auto k = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, kvWidth});
-        auto v = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, kvWidth});
-        auto attn = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto qStorage = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{hiddenWidth});
+        auto kStorage = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{kvWidth});
+        auto vStorage = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{kvWidth});
+        auto attnStorage = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{hiddenWidth});
+        auto q = alpaka::makeView(queue.getDevice(), qStorage.data(), alpaka::Vec{1u, hiddenWidth});
+        auto k = alpaka::makeView(queue.getDevice(), kStorage.data(), alpaka::Vec{1u, kvWidth});
+        auto v = alpaka::makeView(queue.getDevice(), vStorage.data(), alpaka::Vec{1u, kvWidth});
+        auto attn = alpaka::makeView(queue.getDevice(), attnStorage.data(), alpaka::Vec{1u, hiddenWidth});
         auto proj = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto residual1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto norm2 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
@@ -343,14 +353,14 @@ namespace alpaka::nn::onHost::inference
         detail::traceTensor<T_Type>(queue, v, "decodeStep layer " + std::to_string(layer) + " v");
 
         auto q4
-            = alpaka::makeView(queue.getDevice(), q.data(), alpaka::Vec{1u, 1u, weights.numHeads, weights.headDim});
+            = alpaka::makeView(queue.getDevice(), qStorage.data(), alpaka::Vec{1u, 1u, weights.numHeads, weights.headDim});
         auto k4 = alpaka::makeView(
             queue.getDevice(),
-            k.data(),
+            kStorage.data(),
             alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
         auto v4 = alpaka::makeView(
             queue.getDevice(),
-            v.data(),
+            vStorage.data(),
             alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
         auto const tokenPosition = cache.length(layer, 0u);
         alpaka::nn::onHost::nn::ropeInPlace<T_Type>(
@@ -383,7 +393,7 @@ namespace alpaka::nn::onHost::inference
             = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, weights.numHeads, 1u, contextTokens});
         auto probs = alpaka::onHost::alloc<T_Type>(queue.getDevice(), scores.getExtents());
         auto attn4
-            = alpaka::makeView(queue.getDevice(), attn.data(), alpaka::Vec{1u, 1u, weights.numHeads, weights.headDim});
+            = alpaka::makeView(queue.getDevice(), attnStorage.data(), alpaka::Vec{1u, 1u, weights.numHeads, weights.headDim});
 
         alpaka::nn::onHost::nn::attentionScores<T_Type>(
             queue,
