@@ -68,23 +68,31 @@ namespace alpaka::nn::onHost::inference
             {
                 if(extents[0] > 0u)
                 {
-                    auto const row = static_cast<uint32_t>(extents[0] - 1u);
                     auto const width = static_cast<uint32_t>(extents[1]);
                     auto const keep = std::min(sampleCount, width);
-                    T_Type sum{};
-                    T_Type maxAbs{};
-                    for(uint32_t col = 0u; col < width; ++col)
+                    auto traceRow = [&](uint32_t row, std::string_view rowLabel)
                     {
-                        auto const value = host[alpaka::Vec{row, col}];
-                        sum += value;
-                        auto const absValue = value < T_Type{} ? -value : value;
-                        if(absValue > maxAbs)
-                            maxAbs = absValue;
-                    }
-                    os << " row=" << row << " first" << keep << '=';
-                    for(uint32_t col = 0u; col < keep; ++col)
-                        os << ' ' << host[alpaka::Vec{row, col}];
-                    os << " sum=" << sum << " maxAbs=" << maxAbs;
+                        T_Type sum{};
+                        T_Type maxAbs{};
+                        for(uint32_t col = 0u; col < width; ++col)
+                        {
+                            auto const value = host[alpaka::Vec{row, col}];
+                            sum += value;
+                            auto const absValue = value < T_Type{} ? -value : value;
+                            if(absValue > maxAbs)
+                                maxAbs = absValue;
+                        }
+                        os << ' ' << rowLabel << '=' << row << " first" << keep << '=';
+                        for(uint32_t col = 0u; col < keep; ++col)
+                            os << ' ' << host[alpaka::Vec{row, col}];
+                        os << " sum=" << sum << " maxAbs=" << maxAbs;
+                    };
+
+                    traceRow(0u, "row0");
+                    if(extents[0] > 2u)
+                        traceRow(static_cast<uint32_t>(extents[0] / 2u), "rowMid");
+                    if(extents[0] > 1u)
+                        traceRow(static_cast<uint32_t>(extents[0] - 1u), "rowLast");
                 }
             }
             else

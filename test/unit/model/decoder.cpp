@@ -72,6 +72,12 @@ namespace
         return env != nullptr && env[0] != '\0' && env[0] != '0';
     }
 
+    bool fullStageCompareEnabled()
+    {
+        auto const* env = std::getenv("ALPAKANN_DEBUG_PREFILL_FULL_COMPARE");
+        return env != nullptr && env[0] != '\0' && env[0] != '0';
+    }
+
     template<typename T_Type>
     struct StageSnapshot
     {
@@ -331,6 +337,41 @@ namespace
     }
 
     template<typename T_Type>
+    std::string fullPrefillStageReport(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& prompt,
+        uint32_t capacityA,
+        uint32_t capacityB)
+    {
+        auto cacheA = alpaka::nn::onHost::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            capacityA,
+            model.config.hiddenSize / model.config.numHeads);
+        auto cacheB = alpaka::nn::onHost::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            capacityB,
+            model.config.hiddenSize / model.config.numHeads);
+        auto stagesA = runPrefillStages<T_Type>(queue, exec, model, prompt, cacheA, "capacity " + std::to_string(capacityA));
+        auto stagesB = runPrefillStages<T_Type>(queue, exec, model, prompt, cacheB, "capacity " + std::to_string(capacityB));
+
+        std::ostringstream os;
+        auto const stageCount = std::min(stagesA.size(), stagesB.size());
+        for(std::size_t stage = 0; stage < stageCount; ++stage)
+            os << summarizeStageDiff(stagesA[stage], stagesB[stage], static_cast<T_Type>(1.0e-4)) << '\n';
+        if(stagesA.size() != stagesB.size())
+            os << "stage count mismatch lhs=" << stagesA.size() << " rhs=" << stagesB.size() << '\n';
+        return os.str();
+    }
+
+    template<typename T_Type>
     std::string compareDecodeStages(
         auto& queue,
         auto exec,
@@ -368,6 +409,42 @@ namespace
             return os.str();
         }
         return "all captured decode stages matched";
+    }
+
+    template<typename T_Type>
+    std::string fullDecodeStageReport(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& prompt,
+        uint32_t nextToken,
+        uint32_t capacityA,
+        uint32_t capacityB)
+    {
+        auto stagesA = runDecodeStages<T_Type>(
+            queue,
+            exec,
+            model,
+            prompt,
+            nextToken,
+            capacityA,
+            "decode capacity " + std::to_string(capacityA));
+        auto stagesB = runDecodeStages<T_Type>(
+            queue,
+            exec,
+            model,
+            prompt,
+            nextToken,
+            capacityB,
+            "decode capacity " + std::to_string(capacityB));
+
+        std::ostringstream os;
+        auto const stageCount = std::min(stagesA.size(), stagesB.size());
+        for(std::size_t stage = 0; stage < stageCount; ++stage)
+            os << summarizeStageDiff(stagesA[stage], stagesB[stage], static_cast<T_Type>(1.0e-4)) << '\n';
+        if(stagesA.size() != stagesB.size())
+            os << "decode stage count mismatch lhs=" << stagesA.size() << " rhs=" << stagesB.size() << '\n';
+        return os.str();
     }
 
     template<typename T_Type>
@@ -487,6 +564,8 @@ TEMPLATE_LIST_TEST_CASE("tiny llama model loads and generates deterministically"
     REQUIRE(generated.size() == 6u);
     if(generated[4] != 25190u)
         INFO(comparePrefillStages<float>(queue, exec, model, prompt));
+    if(fullStageCompareEnabled())
+        INFO(fullPrefillStageReport<float>(queue, exec, model, prompt, 4u, 5u));
     CHECK(generated[4] == 25190u);
     CHECK(generated[5] == 6074u);
     alpaka::nn::test::checkValue(hostLogits[alpaka::Vec{0u, 0u}], -0.0607535f, 1.0e-4, 1.0e-4);
@@ -527,6 +606,8 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decodeStep matches greedy generation", "[mod
     auto next = alpaka::nn::onHost::inference::argmax<float>(hostLogits, 0u);
     if(next != 25190u)
         INFO(comparePrefillStages<float>(queue, exec, model, prompt));
+    if(fullStageCompareEnabled())
+        INFO(fullPrefillStageReport<float>(queue, exec, model, prompt, 4u, 6u));
     REQUIRE(next == 25190u);
 
     auto stepLogits = alpaka::nn::onHost::model::decodeStep(queue, exec, model, cache, next);
@@ -539,6 +620,8 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decodeStep matches greedy generation", "[mod
     auto const next2 = alpaka::nn::onHost::inference::argmax<float>(hostStepLogits, 0u);
     if(next2 != 6074u)
         INFO(compareDecodeStages<float>(queue, exec, model, prompt, next));
+    if(fullStageCompareEnabled())
+        INFO(fullDecodeStageReport<float>(queue, exec, model, prompt, next, 6u, 7u));
     REQUIRE(next2 == 6074u);
 
     auto step2Logits = alpaka::nn::onHost::model::decodeStep(queue, exec, model, cache, next2);
@@ -626,6 +709,8 @@ TEMPLATE_LIST_TEST_CASE("tiny llama implicit and explicit prefill agree", "[mode
                          << " maxAbsDiff=" << maxAbsDiff);
     if(prefillCompareEnabled() || mismatchCount != 0u)
         INFO(comparePrefillStages<float>(queue, exec, model, prompt));
+    if(fullStageCompareEnabled())
+        INFO(fullPrefillStageReport<float>(queue, exec, model, prompt, 4u, 6u));
     REQUIRE(mismatchCount == 0u);
 }
 
@@ -699,6 +784,8 @@ TEMPLATE_LIST_TEST_CASE("tiny llama prefill is independent of cache capacity", "
             "capacity " << capacities.front() << " vs " << capacities[idx] << " mismatchCount=" << mismatchCount
                         << " firstMismatchToken=" << firstMismatchToken << " reference=" << referenceValue
                         << " candidate=" << candidateValue << " maxAbsDiff=" << maxAbsDiff);
+        if(fullStageCompareEnabled())
+            INFO(fullPrefillStageReport<float>(queue, exec, model, prompt, capacities.front(), capacities[idx]));
         REQUIRE(mismatchCount == 0u);
     }
 }
