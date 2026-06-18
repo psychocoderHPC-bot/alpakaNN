@@ -72,12 +72,8 @@ namespace alpaka::nn::onHost::nn
                << (kvLayout == alpaka::nn::AttentionKvLayout::BTHD ? "BTHD" : "BHTD");
             detail::printTrace(os.str());
         }
-        auto const scoreExtents = scores.getExtents();
-        auto const totalElements
-            = static_cast<uint32_t>(scoreExtents[0]) * static_cast<uint32_t>(scoreExtents[1])
-              * static_cast<uint32_t>(scoreExtents[2]) * static_cast<uint32_t>(scoreExtents[3]);
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, alpaka::Vec{totalElements}),
+            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, scores.getExtents()),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::AttentionScoresKernel<T_Type>{queriesPerKvGroup, kvLayout},
                 scores,
@@ -105,11 +101,8 @@ namespace alpaka::nn::onHost::nn
                << (kvLayout == alpaka::nn::AttentionKvLayout::BTHD ? "BTHD" : "BHTD");
             detail::printTrace(os.str());
         }
-        auto const outExtents = out.getExtents();
-        auto const totalElements = static_cast<uint32_t>(outExtents[0]) * static_cast<uint32_t>(outExtents[1])
-                                   * static_cast<uint32_t>(outExtents[2]) * static_cast<uint32_t>(outExtents[3]);
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, alpaka::Vec{totalElements}),
+            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, out.getExtents()),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::AttentionApplyKernel<T_Type>{queriesPerKvGroup, kvLayout},
                 out,

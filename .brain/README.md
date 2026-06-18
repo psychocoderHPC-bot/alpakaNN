@@ -10,6 +10,7 @@
   - Host-callable APIs in `alpaka::nn::onHost`.
 - `include/alpaka/nn/onAcc/internal`
   - Acc-only kernel building blocks used by host wrappers.
+  - Attention kernels are sensitive to launch/indexing shape; the current fix keeps them on native 4D launch extents.
 - `CMakeLists.txt`
   - Package name stays `alpakaNN`; exported target is `alpaka::nn`.
 - `test/unit`

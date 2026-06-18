@@ -27,6 +27,8 @@
 - `onHost/nn`
   - Embedding, RMSNorm, softmax, RoPE, attention, and MLP host wrappers.
   - Host-side shape checks cache extents locally before type-based rank queries.
+  - `attention.hpp` now launches `attentionScores` / `attentionApply` with native 4D extents instead of flattening to 1D.
+  - This matches the rest of the kernel launch style and avoids decoder-only CUDA divergence where `scores raw` depended on spare cache capacity.
 - `onHost/inference`
   - KV cache, transformer block, and greedy generation.
   - `generate.hpp` supports `ALPAKANN_DEBUG_TOPK=1` to print per-step top logits and selections during greedy decoding.
