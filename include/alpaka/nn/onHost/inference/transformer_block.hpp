@@ -195,6 +195,7 @@ namespace alpaka::nn::onHost::inference
         auto v = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens, kvWidth});
         auto attn = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto proj = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto residual1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto norm2 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto mlpOut = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
 
@@ -238,14 +239,15 @@ namespace alpaka::nn::onHost::inference
             scores,
             queriesPerKvGroup,
             alpaka::nn::AttentionKvLayout::BTHD);
+        detail::traceTensor<T_Type>(queue, scores, "transformerBlock layer " + std::to_string(layer) + " scores raw");
         alpaka::nn::onHost::ops::scale<T_Type>(
             queue,
             exec,
             scores,
             static_cast<T_Type>(1) / alpaka::math::sqrt(static_cast<T_Type>(weights.headDim)),
             scores);
-        alpaka::nn::onHost::nn::causalSoftmax<T_Type>(queue, exec, scores, probs, 3u, 2u, 3u);
         detail::traceTensor<T_Type>(queue, scores, "transformerBlock layer " + std::to_string(layer) + " scores");
+        alpaka::nn::onHost::nn::causalSoftmax<T_Type>(queue, exec, scores, probs, 3u, 2u, 3u);
         detail::traceTensor<T_Type>(queue, probs, "transformerBlock layer " + std::to_string(layer) + " probs");
         alpaka::nn::onHost::nn::attentionApply<T_Type>(
             queue,
@@ -258,12 +260,16 @@ namespace alpaka::nn::onHost::inference
         detail::traceTensor<T_Type>(queue, attn, "transformerBlock layer " + std::to_string(layer) + " attn");
         alpaka::nn::onHost::nn::outputProjection<T_Type>(queue, exec, attn, weights.Wo, proj);
         detail::traceTensor<T_Type>(queue, proj, "transformerBlock layer " + std::to_string(layer) + " proj");
-        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, input, proj, output);
-        alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, output, weights.rms2Weight, norm2, weights.epsilon);
+        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, input, proj, residual1);
+        detail::traceTensor<T_Type>(
+            queue,
+            residual1,
+            "transformerBlock layer " + std::to_string(layer) + " residual1");
+        alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, residual1, weights.rms2Weight, norm2, weights.epsilon);
         detail::traceTensor<T_Type>(queue, norm2, "transformerBlock layer " + std::to_string(layer) + " norm2");
         alpaka::nn::onHost::nn::mlp<T_Type>(queue, exec, norm2, weights.Wgate, weights.Wup, weights.Wdown, mlpOut);
         detail::traceTensor<T_Type>(queue, mlpOut, "transformerBlock layer " + std::to_string(layer) + " mlp");
-        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, output, mlpOut, output);
+        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, residual1, mlpOut, output);
         detail::traceTensor<T_Type>(
             queue,
             output,
@@ -317,6 +323,7 @@ namespace alpaka::nn::onHost::inference
         auto v = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, kvWidth});
         auto attn = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto proj = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto residual1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto norm2 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
         auto mlpOut = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
 
@@ -378,14 +385,15 @@ namespace alpaka::nn::onHost::inference
             scores,
             queriesPerKvGroup,
             alpaka::nn::AttentionKvLayout::BHTD);
+        detail::traceTensor<T_Type>(queue, scores, "decodeStep layer " + std::to_string(layer) + " scores raw");
         alpaka::nn::onHost::ops::scale<T_Type>(
             queue,
             exec,
             scores,
             static_cast<T_Type>(1) / alpaka::math::sqrt(static_cast<T_Type>(weights.headDim)),
             scores);
-        alpaka::nn::onHost::nn::softmax<T_Type>(queue, exec, scores, probs, 3u);
         detail::traceTensor<T_Type>(queue, scores, "decodeStep layer " + std::to_string(layer) + " scores");
+        alpaka::nn::onHost::nn::softmax<T_Type>(queue, exec, scores, probs, 3u);
         detail::traceTensor<T_Type>(queue, probs, "decodeStep layer " + std::to_string(layer) + " probs");
         alpaka::nn::onHost::nn::attentionApply<T_Type>(
             queue,
@@ -398,12 +406,14 @@ namespace alpaka::nn::onHost::inference
         detail::traceTensor<T_Type>(queue, attn, "decodeStep layer " + std::to_string(layer) + " attn");
         alpaka::nn::onHost::nn::outputProjection<T_Type>(queue, exec, attn, weights.Wo, proj);
         detail::traceTensor<T_Type>(queue, proj, "decodeStep layer " + std::to_string(layer) + " proj");
-        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, input, proj, output);
-        alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, output, weights.rms2Weight, norm2, weights.epsilon);
+        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, input, proj, residual1);
+        detail::traceTensor<T_Type>(queue, residual1, "decodeStep layer " + std::to_string(layer) + " residual1");
+        alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, residual1, weights.rms2Weight, norm2, weights.epsilon);
         detail::traceTensor<T_Type>(queue, norm2, "decodeStep layer " + std::to_string(layer) + " norm2");
         alpaka::nn::onHost::nn::mlp<T_Type>(queue, exec, norm2, weights.Wgate, weights.Wup, weights.Wdown, mlpOut);
         detail::traceTensor<T_Type>(queue, mlpOut, "decodeStep layer " + std::to_string(layer) + " mlp");
-        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, output, mlpOut, output);
+        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, residual1, mlpOut, output);
+        detail::traceTensor<T_Type>(queue, output, "decodeStep layer " + std::to_string(layer) + " output");
         alpaka::onHost::wait(queue);
     }
 } // namespace alpaka::nn::onHost::inference
