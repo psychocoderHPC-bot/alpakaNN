@@ -14,13 +14,26 @@
 
 namespace alpaka::nn::onHost::nn
 {
+    namespace detail
+    {
+        auto softmaxLaunchExtents(auto const& outputExtents, uint32_t axis)
+        {
+            auto launchExtents = outputExtents;
+            launchExtents[axis] = 1u;
+            return launchExtents;
+        }
+    } // namespace detail
+
     template<typename T_Type>
     void softmax(auto& queue, auto exec, auto const& input, auto& output, uint32_t axis)
     {
         if(input.getExtents() != output.getExtents())
             throw std::invalid_argument{"softmax shape mismatch."};
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, output.getExtents()),
+            alpaka::nn::onHost::internal::makeFrameSpec(
+                queue.getDevice(),
+                exec,
+                detail::softmaxLaunchExtents(output.getExtents(), axis)),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::SoftmaxKernel<T_Type>{axis, false, 0u, 0u},
                 output,
@@ -33,7 +46,10 @@ namespace alpaka::nn::onHost::nn
         if(input.getExtents() != output.getExtents() || input.getExtents() != mask.getExtents())
             throw std::invalid_argument{"maskedSoftmax shape mismatch."};
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, output.getExtents()),
+            alpaka::nn::onHost::internal::makeFrameSpec(
+                queue.getDevice(),
+                exec,
+                detail::softmaxLaunchExtents(output.getExtents(), axis)),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::MaskedSoftmaxKernel<T_Type>{axis},
                 output,
@@ -52,9 +68,12 @@ namespace alpaka::nn::onHost::nn
         uint32_t keyAxis)
     {
         if(input.getExtents() != output.getExtents())
-            throw std::invalid_argument{"causalSoftmax shape mismatch."};
+            throw std::invalid_argument{"softmax shape mismatch."};
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, output.getExtents()),
+            alpaka::nn::onHost::internal::makeFrameSpec(
+                queue.getDevice(),
+                exec,
+                detail::softmaxLaunchExtents(output.getExtents(), axis)),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::SoftmaxKernel<T_Type>{axis, true, queryAxis, keyAxis},
                 output,
