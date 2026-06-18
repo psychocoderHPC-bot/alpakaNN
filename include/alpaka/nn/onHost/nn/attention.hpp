@@ -34,12 +34,6 @@ namespace alpaka::nn::onHost::nn
                 std::fprintf(stderr, "%s\n", message.c_str());
         }
 
-        inline auto attentionScoresLaunchExtents(auto const& scoreExtents)
-        {
-            auto launchExtents = scoreExtents;
-            launchExtents[3] = 1u;
-            return launchExtents;
-        }
     } // namespace detail
 
     template<typename T_Type>
@@ -80,10 +74,7 @@ namespace alpaka::nn::onHost::nn
             detail::printTrace(os.str());
         }
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(
-                queue.getDevice(),
-                exec,
-                detail::attentionScoresLaunchExtents(scores.getExtents())),
+            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, scores.getExtents()),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::AttentionScoresKernel<T_Type>{queriesPerKvGroup, kvLayout},
                 scores,

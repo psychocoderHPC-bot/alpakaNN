@@ -27,9 +27,8 @@
 - `onHost/nn`
   - Embedding, RMSNorm, softmax, RoPE, attention, and MLP host wrappers.
   - Host-side shape checks cache extents locally before type-based rank queries.
-  - `attention.hpp` now launches `attentionScores` / `attentionApply` with native 4D extents instead of flattening to 1D.
-  - This matches the rest of the kernel launch style and avoids decoder-only CUDA divergence where `scores raw` depended on spare cache capacity.
-  - `attentionScores` now launches one worker per `(batch, head, query)` and computes the full key loop inside that worker, which is the guarded path for decoder prefill/decode parity.
+  - `attention.hpp` launches `attentionScores` / `attentionApply` with native 4D extents.
+  - Current local decoder diagnostics indicate prefill parity is stable, while a CUDA-focused decode-only divergence remains isolated to kernel-produced `scores raw` over cache-backed `BHTD` views.
 - `onHost/inference`
   - KV cache, transformer block, and greedy generation.
   - `generate.hpp` supports `ALPAKANN_DEBUG_TOPK=1` to print per-step top logits and selections during greedy decoding.
@@ -45,7 +44,24 @@
 - `onAcc/internal/nn`
   - Embedding, RMSNorm, softmax, RoPE, and attention kernels.
   - Kernel axis selection uses `ALPAKA_TYPEOF(extents)::dim()` to avoid nvcc `consteval` call failures.
-  - Attention score computation is intentionally mapped over `(batch, head, query)` rather than per-score `(batch, head, query, key)` to keep decoder CUDA behavior stable with cache-capacity-dependent pitches.
+  - `AttentionScoresKernel` is currently mapped per score `(batch, head, query, key)`.
+  - Local decoder substage tests now distinguish cache-content parity from kernel-score parity, which is the main remaining path to watch on CUDA.
+
+## Decoder diagnostics
+
+- `test/unit/model/decoder.cpp`
+  - `StageSnapshot` now supports arbitrary-rank captured tensors by flattening values and storing the full shape vector.
+  - Added `tiny llama prefill layer 0 substages are independent of cache capacity`.
+  - Added `tiny llama decode layer 0 substages are independent of cache capacity`.
+  - The decode substage test also captures:
+    - cache keys
+    - cache values
+    - reference decode scores from copied host tensors
+  - Current local signal:
+    - prefill substage parity passes
+    - decode cache keys/values parity passes
+    - decode reference-score parity passes
+    - decode kernel `scores raw` can still diverge across spare cache capacities
 - `onAcc/internal/ops`
   - Operator kernels used by host-side launchers.
   - Kernel/validation rank queries use the same nvcc workaround as host code.

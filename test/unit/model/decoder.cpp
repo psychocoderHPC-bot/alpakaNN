@@ -82,10 +82,66 @@ namespace
     struct StageSnapshot
     {
         std::string label;
-        uint32_t rows{};
-        uint32_t cols{};
+        std::vector<uint32_t> shape;
         std::vector<T_Type> values;
     };
+
+    template<typename T_Extents>
+    std::vector<uint32_t> makeShapeVector(T_Extents const& extents)
+    {
+        std::vector<uint32_t> shape;
+        shape.reserve(T_Extents::dim());
+        for(uint32_t dim = 0u; dim < T_Extents::dim(); ++dim)
+            shape.push_back(static_cast<uint32_t>(extents[dim]));
+        return shape;
+    }
+
+    std::size_t flattenedElementCount(std::vector<uint32_t> const& shape)
+    {
+        std::size_t count = 1u;
+        for(auto extent : shape)
+            count *= static_cast<std::size_t>(extent);
+        return count;
+    }
+
+    std::string formatShape(std::vector<uint32_t> const& shape)
+    {
+        std::ostringstream os;
+        os << '(';
+        for(std::size_t dim = 0; dim < shape.size(); ++dim)
+        {
+            if(dim != 0u)
+                os << ',';
+            os << shape[dim];
+        }
+        os << ')';
+        return os.str();
+    }
+
+    std::string formatMultiIndex(std::size_t flatIndex, std::vector<uint32_t> const& shape)
+    {
+        if(shape.empty())
+            return "()";
+
+        std::vector<uint32_t> index(shape.size(), 0u);
+        for(std::size_t rev = shape.size(); rev-- > 0u;)
+        {
+            auto const extent = static_cast<std::size_t>(shape[rev]);
+            index[rev] = static_cast<uint32_t>(flatIndex % extent);
+            flatIndex /= extent;
+        }
+
+        std::ostringstream os;
+        os << '(';
+        for(std::size_t dim = 0; dim < index.size(); ++dim)
+        {
+            if(dim != 0u)
+                os << ',';
+            os << index[dim];
+        }
+        os << ')';
+        return os.str();
+    }
 
     template<typename T_Type>
     StageSnapshot<T_Type> captureStage(auto& queue, auto const& tensor, std::string label)
@@ -96,12 +152,47 @@ namespace
 
         StageSnapshot<T_Type> snapshot;
         snapshot.label = std::move(label);
-        snapshot.rows = static_cast<uint32_t>(host.getExtents()[0]);
-        snapshot.cols = static_cast<uint32_t>(host.getExtents()[1]);
-        snapshot.values.reserve(static_cast<std::size_t>(snapshot.rows) * static_cast<std::size_t>(snapshot.cols));
-        for(uint32_t row = 0u; row < snapshot.rows; ++row)
-            for(uint32_t col = 0u; col < snapshot.cols; ++col)
-                snapshot.values.push_back(host[alpaka::Vec{row, col}]);
+        snapshot.shape = makeShapeVector(host.getExtents());
+        auto const count = flattenedElementCount(snapshot.shape);
+        snapshot.values.assign(host.data(), host.data() + static_cast<std::ptrdiff_t>(count));
+        return snapshot;
+    }
+
+    template<typename T_Type>
+    StageSnapshot<T_Type> referenceDecodeAttentionScores(auto& queue, auto const& q, auto const& keys, std::string label)
+    {
+        auto hostQ = alpaka::onHost::allocHost<T_Type>(q.getExtents());
+        auto hostKeys = alpaka::onHost::allocHost<T_Type>(keys.getExtents());
+        alpaka::onHost::memcpy(queue, hostQ, q);
+        alpaka::onHost::memcpy(queue, hostKeys, keys);
+        alpaka::onHost::wait(queue);
+
+        StageSnapshot<T_Type> snapshot;
+        snapshot.label = std::move(label);
+        snapshot.shape = {
+            static_cast<uint32_t>(hostQ.getExtents()[0]),
+            static_cast<uint32_t>(hostQ.getExtents()[2]),
+            static_cast<uint32_t>(hostQ.getExtents()[1]),
+            static_cast<uint32_t>(hostKeys.getExtents()[2])};
+        snapshot.values.reserve(flattenedElementCount(snapshot.shape));
+
+        for(uint32_t batch = 0u; batch < snapshot.shape[0]; ++batch)
+        {
+            for(uint32_t head = 0u; head < snapshot.shape[1]; ++head)
+            {
+                for(uint32_t query = 0u; query < snapshot.shape[2]; ++query)
+                {
+                    for(uint32_t keyToken = 0u; keyToken < snapshot.shape[3]; ++keyToken)
+                    {
+                        T_Type sum{};
+                        for(uint32_t d = 0u; d < hostQ.getExtents()[3]; ++d)
+                            sum += hostQ[alpaka::Vec{batch, query, head, d}]
+                                   * hostKeys[alpaka::Vec{batch, head, keyToken, d}];
+                        snapshot.values.push_back(sum);
+                    }
+                }
+            }
+        }
         return snapshot;
     }
 
@@ -255,16 +346,14 @@ namespace
     {
         std::ostringstream os;
         os << lhs.label << " vs " << rhs.label;
-        if(lhs.rows != rhs.rows || lhs.cols != rhs.cols)
+        if(lhs.shape != rhs.shape)
         {
-            os << " shapeMismatch lhs=(" << lhs.rows << "," << lhs.cols << ") rhs=(" << rhs.rows << "," << rhs.cols
-               << ")";
+            os << " shapeMismatch lhs=" << formatShape(lhs.shape) << " rhs=" << formatShape(rhs.shape);
             return os.str();
         }
 
         uint32_t mismatchCount = 0u;
-        uint32_t firstRow = 0u;
-        uint32_t firstCol = 0u;
+        std::size_t firstMismatchIndex = 0u;
         T_Type firstLhs{};
         T_Type firstRhs{};
         double maxAbsDiff = 0.0;
@@ -280,8 +369,7 @@ namespace
             {
                 if(mismatchCount == 0u)
                 {
-                    firstRow = static_cast<uint32_t>(idx / lhs.cols);
-                    firstCol = static_cast<uint32_t>(idx % lhs.cols);
+                    firstMismatchIndex = idx;
                     firstLhs = left;
                     firstRhs = right;
                 }
@@ -292,7 +380,10 @@ namespace
             meanAbsDiff /= static_cast<double>(lhs.values.size());
         os << " mismatchCount=" << mismatchCount << " maxAbsDiff=" << maxAbsDiff << " meanAbsDiff=" << meanAbsDiff;
         if(mismatchCount != 0u)
-            os << " firstMismatch=(" << firstRow << "," << firstCol << ") lhs=" << firstLhs << " rhs=" << firstRhs;
+        {
+            os << " firstMismatch=" << formatMultiIndex(firstMismatchIndex, lhs.shape) << " lhs=" << firstLhs
+               << " rhs=" << firstRhs;
+        }
         return os.str();
     }
 
@@ -478,6 +569,295 @@ namespace
     }
 
     template<typename T_Type>
+    std::vector<StageSnapshot<T_Type>> runPrefillBlockSubstages(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& prompt,
+        uint32_t cacheCapacity,
+        uint32_t layer)
+    {
+        std::vector<StageSnapshot<T_Type>> stages;
+
+        auto hostTokens = alpaka::onHost::allocHost<uint32_t>(static_cast<uint32_t>(prompt.size()));
+        for(uint32_t i = 0u; i < prompt.size(); ++i)
+            hostTokens[alpaka::Vec{i}] = prompt[i];
+        auto devTokens = alpaka::onHost::allocLike(queue.getDevice(), hostTokens);
+        alpaka::onHost::memcpy(queue, devTokens, hostTokens);
+
+        auto input = alpaka::onHost::alloc<T_Type>(
+            queue.getDevice(),
+            alpaka::Vec{static_cast<uint32_t>(prompt.size()), model.config.hiddenSize});
+        alpaka::nn::onHost::nn::embeddingLookup<T_Type>(queue, exec, devTokens, model.embedding, input);
+
+        auto cache = alpaka::nn::onHost::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            cacheCapacity,
+            model.config.hiddenSize / model.config.numHeads);
+
+        auto const& weights = model.layers[layer];
+        auto const tokens = static_cast<uint32_t>(prompt.size());
+        auto const kvWidth = weights.numKeyValueHeads * weights.headDim;
+        auto const queriesPerKvGroup = weights.numHeads / weights.numKeyValueHeads;
+
+        auto ropeTables = alpaka::nn::onHost::model::makeRopeTables<T_Type>(
+            queue.getDevice(),
+            tokens,
+            model.config.hiddenSize / model.config.numHeads / 2u,
+            static_cast<T_Type>(model.config.ropeTheta));
+
+        auto norm1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto q = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto k = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens, kvWidth});
+        auto v = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{tokens, kvWidth});
+        auto attn = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto proj = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto residual1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto norm2 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto mlpOut = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto output = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+
+        alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, input, weights.rms1Weight, norm1, weights.epsilon);
+        stages.push_back(captureStage<T_Type>(queue, norm1, "layer " + std::to_string(layer) + " norm1"));
+
+        alpaka::nn::onHost::nn::qkvProjection<T_Type>(queue, exec, norm1, weights.Wq, weights.Wk, weights.Wv, q, k, v);
+        stages.push_back(captureStage<T_Type>(queue, q, "layer " + std::to_string(layer) + " q"));
+        stages.push_back(captureStage<T_Type>(queue, k, "layer " + std::to_string(layer) + " k"));
+        stages.push_back(captureStage<T_Type>(queue, v, "layer " + std::to_string(layer) + " v"));
+
+        auto q4 = alpaka::makeView(
+            queue.getDevice(),
+            q.data(),
+            alpaka::Vec{1u, tokens, weights.numHeads, weights.headDim});
+        auto k4 = alpaka::makeView(
+            queue.getDevice(),
+            k.data(),
+            alpaka::Vec{1u, tokens, weights.numKeyValueHeads, weights.headDim});
+        auto v4 = alpaka::makeView(
+            queue.getDevice(),
+            v.data(),
+            alpaka::Vec{1u, tokens, weights.numKeyValueHeads, weights.headDim});
+
+        alpaka::nn::onHost::nn::ropeInPlace<T_Type>(queue, exec, q4, ropeTables.first, ropeTables.second);
+        alpaka::nn::onHost::nn::ropeInPlace<T_Type>(queue, exec, k4, ropeTables.first, ropeTables.second);
+        stages.push_back(captureStage<T_Type>(queue, q, "layer " + std::to_string(layer) + " q rope"));
+        stages.push_back(captureStage<T_Type>(queue, k, "layer " + std::to_string(layer) + " k rope"));
+
+        auto scores
+            = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, weights.numHeads, tokens, tokens});
+        auto probs = alpaka::onHost::alloc<T_Type>(queue.getDevice(), scores.getExtents());
+        auto attn4 = alpaka::makeView(
+            queue.getDevice(),
+            attn.data(),
+            alpaka::Vec{1u, tokens, weights.numHeads, weights.headDim});
+
+        alpaka::nn::onHost::nn::attentionScores<T_Type>(
+            queue,
+            exec,
+            q4,
+            k4,
+            scores,
+            queriesPerKvGroup,
+            alpaka::nn::AttentionKvLayout::BTHD);
+        stages.push_back(captureStage<T_Type>(queue, scores, "layer " + std::to_string(layer) + " scores raw"));
+
+        alpaka::nn::onHost::ops::scale<T_Type>(
+            queue,
+            exec,
+            scores,
+            static_cast<T_Type>(1) / alpaka::math::sqrt(static_cast<T_Type>(weights.headDim)),
+            scores);
+        stages.push_back(captureStage<T_Type>(queue, scores, "layer " + std::to_string(layer) + " scores"));
+
+        alpaka::nn::onHost::nn::causalSoftmax<T_Type>(queue, exec, scores, probs, 3u, 2u, 3u);
+        stages.push_back(captureStage<T_Type>(queue, probs, "layer " + std::to_string(layer) + " probs"));
+
+        alpaka::nn::onHost::nn::attentionApply<T_Type>(
+            queue,
+            exec,
+            probs,
+            v4,
+            attn4,
+            queriesPerKvGroup,
+            alpaka::nn::AttentionKvLayout::BTHD);
+        stages.push_back(captureStage<T_Type>(queue, attn, "layer " + std::to_string(layer) + " attn"));
+
+        alpaka::nn::onHost::nn::outputProjection<T_Type>(queue, exec, attn, weights.Wo, proj);
+        stages.push_back(captureStage<T_Type>(queue, proj, "layer " + std::to_string(layer) + " proj"));
+
+        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, input, proj, residual1);
+        stages.push_back(captureStage<T_Type>(queue, residual1, "layer " + std::to_string(layer) + " residual1"));
+
+        alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, residual1, weights.rms2Weight, norm2, weights.epsilon);
+        stages.push_back(captureStage<T_Type>(queue, norm2, "layer " + std::to_string(layer) + " norm2"));
+
+        alpaka::nn::onHost::nn::mlp<T_Type>(queue, exec, norm2, weights.Wgate, weights.Wup, weights.Wdown, mlpOut);
+        stages.push_back(captureStage<T_Type>(queue, mlpOut, "layer " + std::to_string(layer) + " mlp"));
+
+        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, residual1, mlpOut, output);
+        stages.push_back(captureStage<T_Type>(queue, output, "layer " + std::to_string(layer) + " output"));
+        return stages;
+    }
+
+    template<typename T_Type>
+    std::vector<StageSnapshot<T_Type>> runDecodeBlockSubstages(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& prompt,
+        uint32_t nextToken,
+        uint32_t cacheCapacity,
+        uint32_t layer)
+    {
+        std::vector<StageSnapshot<T_Type>> stages;
+        auto cache = alpaka::nn::onHost::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            cacheCapacity,
+            model.config.hiddenSize / model.config.numHeads);
+        (void)alpaka::nn::onHost::model::prefill(queue, exec, model, prompt, cache, "decode prefill");
+
+        auto hostToken = alpaka::onHost::allocHost<uint32_t>(1u);
+        hostToken[alpaka::Vec{0u}] = nextToken;
+        auto devToken = alpaka::onHost::allocLike(queue.getDevice(), hostToken);
+        alpaka::onHost::memcpy(queue, devToken, hostToken);
+
+        auto input = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.hiddenSize});
+        alpaka::nn::onHost::nn::embeddingLookup<T_Type>(queue, exec, devToken, model.embedding, input);
+
+        auto const& weights = model.layers[layer];
+        auto const kvWidth = weights.numKeyValueHeads * weights.headDim;
+        auto const queriesPerKvGroup = weights.numHeads / weights.numKeyValueHeads;
+
+        auto ropeTables = alpaka::nn::onHost::model::makeRopeTables<T_Type>(
+            queue.getDevice(),
+            cache.length(layer, 0u) + 1u,
+            model.config.hiddenSize / model.config.numHeads / 2u,
+            static_cast<T_Type>(model.config.ropeTheta));
+
+        auto norm1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto q = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto k = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, kvWidth});
+        auto v = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, kvWidth});
+        auto attn = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto proj = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto residual1 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto norm2 = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto mlpOut = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+        auto output = alpaka::onHost::alloc<T_Type>(queue.getDevice(), input.getExtents());
+
+        alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, input, weights.rms1Weight, norm1, weights.epsilon);
+        stages.push_back(captureStage<T_Type>(queue, norm1, "decode layer " + std::to_string(layer) + " norm1"));
+
+        alpaka::nn::onHost::nn::qkvProjection<T_Type>(queue, exec, norm1, weights.Wq, weights.Wk, weights.Wv, q, k, v);
+        stages.push_back(captureStage<T_Type>(queue, q, "decode layer " + std::to_string(layer) + " q"));
+        stages.push_back(captureStage<T_Type>(queue, k, "decode layer " + std::to_string(layer) + " k"));
+        stages.push_back(captureStage<T_Type>(queue, v, "decode layer " + std::to_string(layer) + " v"));
+
+        auto q4
+            = alpaka::makeView(queue.getDevice(), q.data(), alpaka::Vec{1u, 1u, weights.numHeads, weights.headDim});
+        auto k4 = alpaka::makeView(
+            queue.getDevice(),
+            k.data(),
+            alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
+        auto v4 = alpaka::makeView(
+            queue.getDevice(),
+            v.data(),
+            alpaka::Vec{1u, 1u, weights.numKeyValueHeads, weights.headDim});
+
+        auto const tokenPosition = cache.length(layer, 0u);
+        alpaka::nn::onHost::nn::ropeInPlace<T_Type>(
+            queue,
+            exec,
+            q4,
+            ropeTables.first,
+            ropeTables.second,
+            alpaka::nn::RopeLayout::BTHD,
+            tokenPosition);
+        alpaka::nn::onHost::nn::ropeInPlace<T_Type>(
+            queue,
+            exec,
+            k4,
+            ropeTables.first,
+            ropeTables.second,
+            alpaka::nn::RopeLayout::BTHD,
+            tokenPosition);
+        stages.push_back(captureStage<T_Type>(queue, q, "decode layer " + std::to_string(layer) + " q rope"));
+        stages.push_back(captureStage<T_Type>(queue, k, "decode layer " + std::to_string(layer) + " k rope"));
+
+        cache.append(queue, exec, layer, 0u, tokenPosition, k4, v4);
+        auto const contextTokens = cache.length(layer, 0u);
+        auto keys = cache.getKeys(layer, 0u, contextTokens);
+        auto values = cache.getValues(layer, 0u, contextTokens);
+        stages.push_back(captureStage<T_Type>(queue, keys, "decode layer " + std::to_string(layer) + " cache keys"));
+        stages.push_back(
+            captureStage<T_Type>(queue, values, "decode layer " + std::to_string(layer) + " cache values"));
+        stages.push_back(referenceDecodeAttentionScores<T_Type>(
+            queue,
+            q4,
+            keys,
+            "decode layer " + std::to_string(layer) + " scores raw ref"));
+
+        auto scores
+            = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, weights.numHeads, 1u, contextTokens});
+        auto probs = alpaka::onHost::alloc<T_Type>(queue.getDevice(), scores.getExtents());
+        auto attn4
+            = alpaka::makeView(queue.getDevice(), attn.data(), alpaka::Vec{1u, 1u, weights.numHeads, weights.headDim});
+
+        alpaka::nn::onHost::nn::attentionScores<T_Type>(
+            queue,
+            exec,
+            q4,
+            keys,
+            scores,
+            queriesPerKvGroup,
+            alpaka::nn::AttentionKvLayout::BHTD);
+        stages.push_back(captureStage<T_Type>(queue, scores, "decode layer " + std::to_string(layer) + " scores raw"));
+
+        alpaka::nn::onHost::ops::scale<T_Type>(
+            queue,
+            exec,
+            scores,
+            static_cast<T_Type>(1) / alpaka::math::sqrt(static_cast<T_Type>(weights.headDim)),
+            scores);
+        stages.push_back(captureStage<T_Type>(queue, scores, "decode layer " + std::to_string(layer) + " scores"));
+
+        alpaka::nn::onHost::nn::softmax<T_Type>(queue, exec, scores, probs, 3u);
+        stages.push_back(captureStage<T_Type>(queue, probs, "decode layer " + std::to_string(layer) + " probs"));
+
+        alpaka::nn::onHost::nn::attentionApply<T_Type>(
+            queue,
+            exec,
+            probs,
+            values,
+            attn4,
+            queriesPerKvGroup,
+            alpaka::nn::AttentionKvLayout::BHTD);
+        stages.push_back(captureStage<T_Type>(queue, attn, "decode layer " + std::to_string(layer) + " attn"));
+
+        alpaka::nn::onHost::nn::outputProjection<T_Type>(queue, exec, attn, weights.Wo, proj);
+        stages.push_back(captureStage<T_Type>(queue, proj, "decode layer " + std::to_string(layer) + " proj"));
+
+        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, input, proj, residual1);
+        stages.push_back(captureStage<T_Type>(queue, residual1, "decode layer " + std::to_string(layer) + " residual1"));
+
+        alpaka::nn::onHost::nn::rmsNorm<T_Type>(queue, exec, residual1, weights.rms2Weight, norm2, weights.epsilon);
+        stages.push_back(captureStage<T_Type>(queue, norm2, "decode layer " + std::to_string(layer) + " norm2"));
+
+        alpaka::nn::onHost::nn::mlp<T_Type>(queue, exec, norm2, weights.Wgate, weights.Wup, weights.Wdown, mlpOut);
+        stages.push_back(captureStage<T_Type>(queue, mlpOut, "decode layer " + std::to_string(layer) + " mlp"));
+
+        alpaka::nn::onHost::ops::add<T_Type>(queue, exec, residual1, mlpOut, output);
+        stages.push_back(captureStage<T_Type>(queue, output, "decode layer " + std::to_string(layer) + " output"));
+        return stages;
+    }
+
+    template<typename T_Type>
     void requireStageParity(
         std::vector<std::vector<StageSnapshot<T_Type>>> const& allStages,
         std::vector<uint32_t> const& capacities,
@@ -492,8 +872,7 @@ namespace
                 std::string{context} + " stage=" + reference.label + " capacityRef="
                 + std::to_string(capacities.front()) + " capacityCmp=" + std::to_string(capacities[idx]));
             INFO(summarizeStageDiff(reference, candidate, static_cast<T_Type>(1.0e-4)));
-            REQUIRE(reference.rows == candidate.rows);
-            REQUIRE(reference.cols == candidate.cols);
+            REQUIRE(reference.shape == candidate.shape);
 
             uint32_t mismatchCount = 0u;
             for(std::size_t valueIdx = 0; valueIdx < reference.values.size(); ++valueIdx)
@@ -951,4 +1330,71 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decode stages are independent of cache capac
     auto const stageCount = allStages.front().size();
     for(std::size_t stageIndex = 0; stageIndex < stageCount; ++stageIndex)
         requireStageParity<float>(allStages, capacities, stageIndex, "decode stage parity");
+}
+
+TEMPLATE_LIST_TEST_CASE(
+    "tiny llama prefill layer 0 substages are independent of cache capacity",
+    "[model][decoder]",
+    TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    std::vector<uint32_t> capacities{4u, 5u, 6u, 7u};
+
+    std::vector<std::vector<StageSnapshot<float>>> allStages;
+    allStages.reserve(capacities.size());
+    for(auto capacity : capacities)
+        allStages.push_back(runPrefillBlockSubstages<float>(queue, exec, model, prompt, capacity, 0u));
+
+    auto const stageCount = allStages.front().size();
+    for(std::size_t stageIndex = 0; stageIndex < stageCount; ++stageIndex)
+        requireStageParity<float>(allStages, capacities, stageIndex, "prefill block substage parity");
+}
+
+TEMPLATE_LIST_TEST_CASE(
+    "tiny llama decode layer 0 substages are independent of cache capacity",
+    "[model][decoder]",
+    TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    auto implicitLogits = alpaka::nn::onHost::model::prefill(queue, exec, model, prompt);
+    auto hostImplicit = alpaka::onHost::allocHost<float>(implicitLogits.getExtents());
+    alpaka::onHost::memcpy(queue, hostImplicit, implicitLogits);
+    alpaka::onHost::wait(queue);
+    auto nextToken = alpaka::nn::onHost::inference::argmax<float>(hostImplicit, 0u);
+
+    std::vector<uint32_t> capacities{6u, 7u, 8u};
+    std::vector<std::vector<StageSnapshot<float>>> allStages;
+    allStages.reserve(capacities.size());
+    for(auto capacity : capacities)
+        allStages.push_back(runDecodeBlockSubstages<float>(queue, exec, model, prompt, nextToken, capacity, 0u));
+
+    auto const stageCount = allStages.front().size();
+    for(std::size_t stageIndex = 0; stageIndex < stageCount; ++stageIndex)
+        requireStageParity<float>(allStages, capacities, stageIndex, "decode block substage parity");
 }
