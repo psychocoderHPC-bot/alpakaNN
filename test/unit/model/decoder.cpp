@@ -370,6 +370,66 @@ namespace
         return "all captured decode stages matched";
     }
 
+    template<typename T_Type>
+    std::vector<std::vector<StageSnapshot<T_Type>>> collectPrefillStagesByCapacity(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& prompt,
+        std::vector<uint32_t> const& capacities)
+    {
+        std::vector<std::vector<StageSnapshot<T_Type>>> allStages;
+        allStages.reserve(capacities.size());
+        for(auto capacity : capacities)
+        {
+            auto cache = alpaka::nn::onHost::inference::makeKvCache<T_Type>(
+                queue.getDevice(),
+                model.config.numLayers,
+                1u,
+                model.config.numKeyValueHeads,
+                capacity,
+                model.config.hiddenSize / model.config.numHeads);
+            allStages.push_back(runPrefillStages<T_Type>(
+                queue,
+                exec,
+                model,
+                prompt,
+                cache,
+                "capacity " + std::to_string(capacity)));
+        }
+        return allStages;
+    }
+
+    template<typename T_Type>
+    void requireStageParity(
+        std::vector<std::vector<StageSnapshot<T_Type>>> const& allStages,
+        std::vector<uint32_t> const& capacities,
+        std::size_t stageIndex,
+        std::string_view context)
+    {
+        auto const& reference = allStages.front().at(stageIndex);
+        for(std::size_t idx = 1; idx < allStages.size(); ++idx)
+        {
+            auto const& candidate = allStages[idx].at(stageIndex);
+            INFO(
+                std::string{context} + " stage=" + reference.label + " capacityRef="
+                + std::to_string(capacities.front()) + " capacityCmp=" + std::to_string(capacities[idx]));
+            INFO(summarizeStageDiff(reference, candidate, static_cast<T_Type>(1.0e-4)));
+            REQUIRE(reference.rows == candidate.rows);
+            REQUIRE(reference.cols == candidate.cols);
+
+            uint32_t mismatchCount = 0u;
+            for(std::size_t valueIdx = 0; valueIdx < reference.values.size(); ++valueIdx)
+            {
+                auto const absDiff = std::fabs(
+                    static_cast<double>(reference.values[valueIdx] - candidate.values[valueIdx]));
+                if(absDiff > 1.0e-4)
+                    ++mismatchCount;
+            }
+            REQUIRE(mismatchCount == 0u);
+        }
+    }
+
     std::string ensureTinyModel()
     {
 #ifdef TINY_LLAMA_MODEL_PATH
@@ -641,4 +701,167 @@ TEMPLATE_LIST_TEST_CASE("tiny llama prefill is independent of cache capacity", "
                         << " candidate=" << candidateValue << " maxAbsDiff=" << maxAbsDiff);
         REQUIRE(mismatchCount == 0u);
     }
+}
+
+TEMPLATE_LIST_TEST_CASE("tiny llama prefill stages are independent of cache capacity", "[model][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    std::vector<uint32_t> capacities{4u, 5u, 6u, 7u};
+    auto allStages = collectPrefillStagesByCapacity<float>(queue, exec, model, prompt, capacities);
+
+    auto const stageCount = allStages.front().size();
+    for(std::size_t stageIndex = 0; stageIndex < stageCount; ++stageIndex)
+        requireStageParity<float>(allStages, capacities, stageIndex, "prefill stage parity");
+}
+
+TEMPLATE_LIST_TEST_CASE("tiny llama embedding stage is independent of cache capacity", "[model][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    std::vector<uint32_t> capacities{4u, 5u, 6u, 7u};
+    auto allStages = collectPrefillStagesByCapacity<float>(queue, exec, model, prompt, capacities);
+    requireStageParity<float>(allStages, capacities, 0u, "embedding parity");
+}
+
+TEMPLATE_LIST_TEST_CASE("tiny llama per-layer outputs are independent of cache capacity", "[model][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    std::vector<uint32_t> capacities{4u, 5u, 6u, 7u};
+    auto allStages = collectPrefillStagesByCapacity<float>(queue, exec, model, prompt, capacities);
+
+    for(uint32_t layer = 0u; layer < model.config.numLayers; ++layer)
+        requireStageParity<float>(allStages, capacities, static_cast<std::size_t>(1u + layer), "layer output parity");
+}
+
+TEMPLATE_LIST_TEST_CASE("tiny llama final norm is independent of cache capacity", "[model][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    std::vector<uint32_t> capacities{4u, 5u, 6u, 7u};
+    auto allStages = collectPrefillStagesByCapacity<float>(queue, exec, model, prompt, capacities);
+    requireStageParity<float>(
+        allStages,
+        capacities,
+        static_cast<std::size_t>(1u + model.config.numLayers),
+        "final norm parity");
+}
+
+TEMPLATE_LIST_TEST_CASE("tiny llama lm head logits are independent of cache capacity", "[model][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    std::vector<uint32_t> capacities{4u, 5u, 6u, 7u};
+    auto allStages = collectPrefillStagesByCapacity<float>(queue, exec, model, prompt, capacities);
+    requireStageParity<float>(
+        allStages,
+        capacities,
+        static_cast<std::size_t>(2u + model.config.numLayers),
+        "lm head full logits parity");
+    requireStageParity<float>(
+        allStages,
+        capacities,
+        static_cast<std::size_t>(3u + model.config.numLayers),
+        "lm head last logits parity");
+}
+
+TEMPLATE_LIST_TEST_CASE("tiny llama decode stages are independent of cache capacity", "[model][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto model = alpaka::nn::onHost::model::loadTinyLlama<float>(device, ensureTinyModel());
+    std::vector<uint32_t> prompt{1u, 2u, 3u, 4u};
+    auto implicitLogits = alpaka::nn::onHost::model::prefill(queue, exec, model, prompt);
+    auto hostImplicit = alpaka::onHost::allocHost<float>(implicitLogits.getExtents());
+    alpaka::onHost::memcpy(queue, hostImplicit, implicitLogits);
+    alpaka::onHost::wait(queue);
+    auto nextToken = alpaka::nn::onHost::inference::argmax<float>(hostImplicit, 0u);
+
+    std::vector<uint32_t> capacities{6u, 7u, 8u};
+    std::vector<std::vector<StageSnapshot<float>>> allStages;
+    allStages.reserve(capacities.size());
+    for(auto capacity : capacities)
+        allStages.push_back(runDecodeStages<float>(
+            queue,
+            exec,
+            model,
+            prompt,
+            nextToken,
+            capacity,
+            "decode capacity " + std::to_string(capacity)));
+
+    auto const stageCount = allStages.front().size();
+    for(std::size_t stageIndex = 0; stageIndex < stageCount; ++stageIndex)
+        requireStageParity<float>(allStages, capacities, stageIndex, "decode stage parity");
 }
