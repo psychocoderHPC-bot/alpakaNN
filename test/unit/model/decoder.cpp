@@ -175,6 +175,76 @@ namespace
     }
 
     template<typename T_Type>
+    std::vector<StageSnapshot<T_Type>> runDecodeStages(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& prompt,
+        uint32_t nextToken,
+        uint32_t cacheCapacity,
+        std::string const& labelPrefix)
+    {
+        std::vector<StageSnapshot<T_Type>> stages;
+        auto cache = alpaka::nn::onHost::inference::makeKvCache<T_Type>(
+            queue.getDevice(),
+            model.config.numLayers,
+            1u,
+            model.config.numKeyValueHeads,
+            cacheCapacity,
+            model.config.hiddenSize / model.config.numHeads);
+        (void)alpaka::nn::onHost::model::prefill(queue, exec, model, prompt, cache, labelPrefix + " prefill");
+
+        auto hostToken = alpaka::onHost::allocHost<uint32_t>(1u);
+        hostToken[alpaka::Vec{0u}] = nextToken;
+        auto devToken = alpaka::onHost::allocLike(queue.getDevice(), hostToken);
+        alpaka::onHost::memcpy(queue, devToken, hostToken);
+
+        auto hidden = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.hiddenSize});
+        alpaka::nn::onHost::nn::embeddingLookup<T_Type>(queue, exec, devToken, model.embedding, hidden);
+        stages.push_back(captureStage<T_Type>(queue, hidden, labelPrefix + " embedding"));
+
+        auto const currentContext = cache.length(0u, 0u);
+        auto ropeTables = alpaka::nn::onHost::model::makeRopeTables<T_Type>(
+            queue.getDevice(),
+            currentContext + 1u,
+            model.config.hiddenSize / model.config.numHeads / 2u,
+            static_cast<T_Type>(model.config.ropeTheta));
+
+        for(uint32_t layer = 0u; layer < model.config.numLayers; ++layer)
+        {
+            auto next = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
+            alpaka::nn::onHost::inference::transformerBlockDecodeStep<T_Type>(
+                queue,
+                exec,
+                hidden,
+                model.layers[layer],
+                cache,
+                layer,
+                ropeTables.first,
+                ropeTables.second,
+                next);
+            hidden = next;
+            stages.push_back(
+                captureStage<T_Type>(queue, hidden, labelPrefix + " layer " + std::to_string(layer) + " output"));
+        }
+
+        auto norm = alpaka::onHost::alloc<T_Type>(queue.getDevice(), hidden.getExtents());
+        alpaka::nn::onHost::nn::rmsNorm<T_Type>(
+            queue,
+            exec,
+            hidden,
+            model.finalNorm,
+            norm,
+            static_cast<T_Type>(model.config.rmsNormEpsilon));
+        stages.push_back(captureStage<T_Type>(queue, norm, labelPrefix + " final norm"));
+
+        auto logits = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{1u, model.config.vocabSize});
+        alpaka::nn::onHost::gemm<T_Type>(queue, exec, norm, model.lmHead, logits);
+        stages.push_back(captureStage<T_Type>(queue, logits, labelPrefix + " logits"));
+        return stages;
+    }
+
+    template<typename T_Type>
     std::string summarizeStageDiff(StageSnapshot<T_Type> const& lhs, StageSnapshot<T_Type> const& rhs, T_Type tolerance)
     {
         std::ostringstream os;
@@ -260,6 +330,46 @@ namespace
         return "all captured prefill stages matched";
     }
 
+    template<typename T_Type>
+    std::string compareDecodeStages(
+        auto& queue,
+        auto exec,
+        auto const& model,
+        std::vector<uint32_t> const& prompt,
+        uint32_t nextToken)
+    {
+        auto compactStages = runDecodeStages<T_Type>(
+            queue,
+            exec,
+            model,
+            prompt,
+            nextToken,
+            static_cast<uint32_t>(prompt.size() + 2u),
+            "decode compact");
+        auto roomyStages = runDecodeStages<T_Type>(
+            queue,
+            exec,
+            model,
+            prompt,
+            nextToken,
+            static_cast<uint32_t>(prompt.size() + 4u),
+            "decode roomy");
+        auto const stageCount = std::min(compactStages.size(), roomyStages.size());
+        for(std::size_t stage = 0; stage < stageCount; ++stage)
+        {
+            auto summary = summarizeStageDiff(compactStages[stage], roomyStages[stage], static_cast<T_Type>(1.0e-4));
+            if(summary.find("mismatchCount=0") == std::string::npos)
+                return "first divergent decode stage: " + summary;
+        }
+        if(compactStages.size() != roomyStages.size())
+        {
+            std::ostringstream os;
+            os << "decode stage count mismatch compact=" << compactStages.size() << " roomy=" << roomyStages.size();
+            return os.str();
+        }
+        return "all captured decode stages matched";
+    }
+
     std::string ensureTinyModel()
     {
 #ifdef TINY_LLAMA_MODEL_PATH
@@ -315,6 +425,8 @@ TEMPLATE_LIST_TEST_CASE("tiny llama model loads and generates deterministically"
 
     auto generated = alpaka::nn::onHost::inference::generateGreedy(queue, exec, model, prompt, 2u);
     REQUIRE(generated.size() == 6u);
+    if(generated[4] != 25190u)
+        INFO(comparePrefillStages<float>(queue, exec, model, prompt));
     CHECK(generated[4] == 25190u);
     CHECK(generated[5] == 6074u);
     alpaka::nn::test::checkValue(hostLogits[alpaka::Vec{0u, 0u}], -0.0607535f, 1.0e-4, 1.0e-4);
@@ -353,6 +465,8 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decodeStep matches greedy generation", "[mod
     INFO(prefillTopLogits);
     maybePrintDiagnostic(prefillTopLogits);
     auto next = alpaka::nn::onHost::inference::argmax<float>(hostLogits, 0u);
+    if(next != 25190u)
+        INFO(comparePrefillStages<float>(queue, exec, model, prompt));
     REQUIRE(next == 25190u);
 
     auto stepLogits = alpaka::nn::onHost::model::decodeStep(queue, exec, model, cache, next);
@@ -363,6 +477,8 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decodeStep matches greedy generation", "[mod
     INFO(stepTopLogits);
     maybePrintDiagnostic(stepTopLogits);
     auto const next2 = alpaka::nn::onHost::inference::argmax<float>(hostStepLogits, 0u);
+    if(next2 != 6074u)
+        INFO(compareDecodeStages<float>(queue, exec, model, prompt, next));
     REQUIRE(next2 == 6074u);
 
     auto step2Logits = alpaka::nn::onHost::model::decodeStep(queue, exec, model, cache, next2);
