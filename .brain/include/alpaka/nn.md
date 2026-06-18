@@ -64,8 +64,13 @@
     - decode kernel `scores raw` can still diverge across spare cache capacities
 - `test/unit/nn/attention.cpp`
   - Added `decoder decode attention cache-backed kv views are independent of spare capacity`.
+  - Added `decoder prefill attention flat packed views are independent of spare allocation`.
+  - Added `decoder prefill projected attention is independent of spare allocation`.
   - Current local signal:
     - direct cache-backed decode attention parity passes across capacities
+    - direct prefill attention parity also passes for:
+      - synthetic flat packed `BTHD` views
+      - projected `qkvProjection -> rope -> attention` path
     - if CUDA fails this direct test, the fault is inside attention/cache-view execution itself
     - if CUDA passes it but decoder substages still fail, the remaining bug is in decoder-specific interaction or memory corruption around that path
 - `onAcc/internal/ops`

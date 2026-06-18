@@ -7,6 +7,7 @@
 
 #include <alpaka/nn/nn.hpp>
 #include <alpaka/nn/onHost/inference/kv_cache.hpp>
+#include <alpaka/nn/onHost/model/decoder.hpp>
 
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -944,4 +945,120 @@ TEMPLATE_LIST_TEST_CASE(
 
     for(uint32_t i = 0u; i < tokens * hidden; ++i)
         alpaka::nn::test::checkValue(attn4[alpaka::Vec{i}], attn5[alpaka::Vec{i}], 1.0e-5f, 1.0e-5f);
+}
+
+TEMPLATE_LIST_TEST_CASE(
+    "decoder prefill projected attention is independent of spare allocation",
+    "[nn][attention][decoder]",
+    TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    constexpr uint32_t tokens = 4u;
+    constexpr uint32_t heads = 4u;
+    constexpr uint32_t headDim = 4u;
+    constexpr uint32_t hidden = heads * headDim;
+
+    auto inputHost = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens, hidden});
+    auto wqHost = alpaka::onHost::allocHost<float>(alpaka::Vec{hidden, hidden});
+    auto wkHost = alpaka::onHost::allocHost<float>(alpaka::Vec{hidden, hidden});
+    auto wvHost = alpaka::onHost::allocHost<float>(alpaka::Vec{hidden, hidden});
+
+    for(auto idx : alpaka::IdxRange{inputHost.getExtents()})
+        inputHost[idx] = -0.25f + static_cast<float>(idx[0] * 13u + idx[1] * 3u) * 0.01f;
+    for(auto idx : alpaka::IdxRange{wqHost.getExtents()})
+    {
+        auto const flat = static_cast<float>(idx[0] * hidden + idx[1]);
+        wqHost[idx] = -0.1f + flat * 0.001f;
+        wkHost[idx] = 0.2f - flat * 0.0007f;
+        wvHost[idx] = -0.05f + flat * 0.0009f;
+    }
+
+    auto inputDev = alpaka::onHost::allocLike(device, inputHost);
+    auto wqDev = alpaka::onHost::allocLike(device, wqHost);
+    auto wkDev = alpaka::onHost::allocLike(device, wkHost);
+    auto wvDev = alpaka::onHost::allocLike(device, wvHost);
+    alpaka::onHost::memcpy(queue, inputDev, inputHost);
+    alpaka::onHost::memcpy(queue, wqDev, wqHost);
+    alpaka::onHost::memcpy(queue, wkDev, wkHost);
+    alpaka::onHost::memcpy(queue, wvDev, wvHost);
+
+    auto ropeTables = alpaka::nn::onHost::model::makeRopeTables<float>(device, tokens, headDim / 2u, 10000.0f);
+
+    auto runWithSpare = [&](uint32_t spareCapacity)
+    {
+        auto dummy = alpaka::onHost::alloc<float>(device, alpaka::Vec{1u, heads, spareCapacity, headDim});
+        alpaka::unused(dummy);
+
+        auto qStorage = alpaka::onHost::alloc<float>(device, alpaka::Vec{tokens * hidden});
+        auto kStorage = alpaka::onHost::alloc<float>(device, alpaka::Vec{tokens * hidden});
+        auto vStorage = alpaka::onHost::alloc<float>(device, alpaka::Vec{tokens * hidden});
+        auto attnStorage = alpaka::onHost::alloc<float>(device, alpaka::Vec{tokens * hidden});
+        auto q2 = alpaka::makeView(device, qStorage.data(), alpaka::Vec{tokens, hidden});
+        auto k2 = alpaka::makeView(device, kStorage.data(), alpaka::Vec{tokens, hidden});
+        auto v2 = alpaka::makeView(device, vStorage.data(), alpaka::Vec{tokens, hidden});
+        auto q4 = alpaka::makeView(device, qStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+        auto k4 = alpaka::makeView(device, kStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+        auto v4 = alpaka::makeView(device, vStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+        auto attn4 = alpaka::makeView(device, attnStorage.data(), alpaka::Vec{1u, tokens, heads, headDim});
+
+        alpaka::nn::onHost::nn::qkvProjection<float>(queue, exec, inputDev, wqDev, wkDev, wvDev, q2, k2, v2);
+        alpaka::nn::onHost::nn::ropeInPlace<float>(queue, exec, q4, ropeTables.first, ropeTables.second);
+        alpaka::nn::onHost::nn::ropeInPlace<float>(queue, exec, k4, ropeTables.first, ropeTables.second);
+
+        auto scores = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, heads, tokens, tokens});
+        auto probs = alpaka::onHost::allocHost<float>(scores.getExtents());
+        auto devScores = alpaka::onHost::allocLike(device, scores);
+        auto devProbs = alpaka::onHost::allocLike(device, probs);
+
+        alpaka::nn::onHost::nn::attentionScores<float>(
+            queue,
+            exec,
+            q4,
+            k4,
+            devScores,
+            1u,
+            alpaka::nn::AttentionKvLayout::BTHD);
+        alpaka::nn::onHost::ops::scale<float>(queue, exec, devScores, 0.5f, devScores);
+        alpaka::nn::onHost::nn::causalSoftmax<float>(queue, exec, devScores, devProbs, 3u, 2u, 3u);
+        alpaka::nn::onHost::nn::attentionApply<float>(
+            queue,
+            exec,
+            devProbs,
+            v4,
+            attn4,
+            1u,
+            alpaka::nn::AttentionKvLayout::BTHD);
+
+        auto qHost = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens * hidden});
+        auto kHost = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens * hidden});
+        auto vHost = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens * hidden});
+        auto attnHost = alpaka::onHost::allocHost<float>(alpaka::Vec{tokens * hidden});
+        alpaka::onHost::memcpy(queue, qHost, qStorage);
+        alpaka::onHost::memcpy(queue, kHost, kStorage);
+        alpaka::onHost::memcpy(queue, vHost, vStorage);
+        alpaka::onHost::memcpy(queue, attnHost, attnStorage);
+        alpaka::onHost::wait(queue);
+        return std::tuple{qHost, kHost, vHost, attnHost};
+    };
+
+    auto [q4a, k4a, v4a, attn4a] = runWithSpare(4u);
+    auto [q4b, k4b, v4b, attn4b] = runWithSpare(5u);
+
+    for(uint32_t i = 0u; i < tokens * hidden; ++i)
+    {
+        alpaka::nn::test::checkValue(q4a[alpaka::Vec{i}], q4b[alpaka::Vec{i}], 1.0e-5f, 1.0e-5f);
+        alpaka::nn::test::checkValue(k4a[alpaka::Vec{i}], k4b[alpaka::Vec{i}], 1.0e-5f, 1.0e-5f);
+        alpaka::nn::test::checkValue(v4a[alpaka::Vec{i}], v4b[alpaka::Vec{i}], 1.0e-5f, 1.0e-5f);
+        alpaka::nn::test::checkValue(attn4a[alpaka::Vec{i}], attn4b[alpaka::Vec{i}], 1.0e-5f, 1.0e-5f);
+    }
 }
