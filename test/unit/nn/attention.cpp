@@ -10,6 +10,9 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
+#include <limits>
+#include <type_traits>
 #include <vector>
 
 using TestApis = alpaka::nn::test::TestApis;
@@ -78,6 +81,93 @@ namespace
             expected[idx] = sum;
         }
         return expected;
+    }
+
+    template<typename T_Type>
+    auto referenceApplyBTHD(auto const& probs, auto const& values, uint32_t queriesPerKvGroup)
+    {
+        auto expected = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{
+            static_cast<uint32_t>(probs.getExtents()[0]),
+            static_cast<uint32_t>(probs.getExtents()[2]),
+            static_cast<uint32_t>(probs.getExtents()[1]),
+            static_cast<uint32_t>(values.getExtents()[3])});
+        for(auto idx : alpaka::IdxRange{expected.getExtents()})
+        {
+            T_Type sum{};
+            auto const kvHead = static_cast<uint32_t>(idx[2]) / queriesPerKvGroup;
+            for(uint32_t key = 0u; key < probs.getExtents()[3]; ++key)
+                sum += probs[alpaka::Vec{idx[0], idx[2], idx[1], key}] * values[alpaka::Vec{idx[0], key, kvHead, idx[3]}];
+            expected[idx] = sum;
+        }
+        return expected;
+    }
+
+    template<typename T_Type>
+    void scaleTensor(auto& tensor, T_Type factor)
+    {
+        for(auto idx : alpaka::IdxRange{tensor.getExtents()})
+            tensor[idx] *= factor;
+    }
+
+    void referenceCausalSoftmaxInPlace(auto& tensor)
+    {
+        auto const extents = tensor.getExtents();
+        using T_Type = std::remove_cvref_t<decltype(tensor[alpaka::Vec{0u, 0u, 0u, 0u}])>;
+        for(uint32_t batch = 0u; batch < extents[0]; ++batch)
+        {
+            for(uint32_t head = 0u; head < extents[1]; ++head)
+            {
+                for(uint32_t query = 0u; query < extents[2]; ++query)
+                {
+                    T_Type maxValue = -std::numeric_limits<T_Type>::infinity();
+                    for(uint32_t key = 0u; key <= query; ++key)
+                        maxValue = std::max(maxValue, tensor[alpaka::Vec{batch, head, query, key}]);
+
+                    T_Type sum{};
+                    for(uint32_t key = 0u; key < extents[3]; ++key)
+                    {
+                        if(key > query)
+                        {
+                            tensor[alpaka::Vec{batch, head, query, key}] = T_Type{};
+                            continue;
+                        }
+                        auto const value = std::exp(tensor[alpaka::Vec{batch, head, query, key}] - maxValue);
+                        tensor[alpaka::Vec{batch, head, query, key}] = value;
+                        sum += value;
+                    }
+                    for(uint32_t key = 0u; key <= query; ++key)
+                        tensor[alpaka::Vec{batch, head, query, key}] /= sum;
+                }
+            }
+        }
+    }
+
+    void referenceSoftmaxInPlace(auto& tensor)
+    {
+        auto const extents = tensor.getExtents();
+        using T_Type = std::remove_cvref_t<decltype(tensor[alpaka::Vec{0u, 0u, 0u, 0u}])>;
+        for(uint32_t batch = 0u; batch < extents[0]; ++batch)
+        {
+            for(uint32_t head = 0u; head < extents[1]; ++head)
+            {
+                for(uint32_t query = 0u; query < extents[2]; ++query)
+                {
+                    T_Type maxValue = -std::numeric_limits<T_Type>::infinity();
+                    for(uint32_t key = 0u; key < extents[3]; ++key)
+                        maxValue = std::max(maxValue, tensor[alpaka::Vec{batch, head, query, key}]);
+
+                    T_Type sum{};
+                    for(uint32_t key = 0u; key < extents[3]; ++key)
+                    {
+                        auto const value = std::exp(tensor[alpaka::Vec{batch, head, query, key}] - maxValue);
+                        tensor[alpaka::Vec{batch, head, query, key}] = value;
+                        sum += value;
+                    }
+                    for(uint32_t key = 0u; key < extents[3]; ++key)
+                        tensor[alpaka::Vec{batch, head, query, key}] /= sum;
+                }
+            }
+        }
     }
 } // namespace
 
@@ -353,4 +443,206 @@ TEMPLATE_LIST_TEST_CASE("attention apply matches reference for decoder decode la
 
     for(auto idx : alpaka::IdxRange{out.getExtents()})
         alpaka::nn::test::checkValue(out[idx], expected[idx], 1.0e-5f, 1.0e-5f);
+}
+
+TEMPLATE_LIST_TEST_CASE("attention apply matches reference for decoder prefill layout", "[nn][attention][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto probs = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
+    auto values = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
+    auto out = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
+    fill4D(values, 1.0f);
+    for(uint32_t query = 0u; query < 4u; ++query)
+    {
+        for(uint32_t head = 0u; head < 4u; ++head)
+        {
+            float norm = 0.0f;
+            for(uint32_t key = 0u; key < 4u; ++key)
+            {
+                auto value = key <= query ? static_cast<float>((query + 1u) * (head + 2u) * (key + 1u)) : 0.0f;
+                probs[alpaka::Vec{0u, head, query, key}] = value;
+                norm += value;
+            }
+            for(uint32_t key = 0u; key < 4u; ++key)
+                probs[alpaka::Vec{0u, head, query, key}] = norm > 0.0f ? probs[alpaka::Vec{0u, head, query, key}] / norm : 0.0f;
+        }
+    }
+    for(auto idx : alpaka::IdxRange{out.getExtents()})
+        out[idx] = -444.0f;
+
+    auto expected = referenceApplyBTHD<float>(probs, values, 1u);
+    auto devProbs = alpaka::onHost::allocLike(device, probs);
+    auto devValues = alpaka::onHost::allocLike(device, values);
+    auto devOut = alpaka::onHost::allocLike(device, out);
+    alpaka::onHost::memcpy(queue, devProbs, probs);
+    alpaka::onHost::memcpy(queue, devValues, values);
+    alpaka::onHost::memcpy(queue, devOut, out);
+
+    alpaka::nn::onHost::nn::attentionApply<float>(
+        queue,
+        exec,
+        devProbs,
+        devValues,
+        devOut,
+        1u,
+        alpaka::nn::AttentionKvLayout::BTHD);
+    alpaka::onHost::memcpy(queue, out, devOut);
+    alpaka::onHost::wait(queue);
+
+    for(auto idx : alpaka::IdxRange{out.getExtents()})
+        alpaka::nn::test::checkValue(out[idx], expected[idx], 1.0e-5f, 1.0e-5f);
+}
+
+TEMPLATE_LIST_TEST_CASE("decoder prefill attention pipeline matches reference", "[nn][attention][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto q = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
+    auto k = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
+    auto v = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
+    auto scores = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
+    auto probs = alpaka::onHost::allocHost<float>(scores.getExtents());
+    auto out = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
+    fill4D(q, 0.125f);
+    fill4D(k, -0.25f);
+    fill4D(v, 0.5f);
+
+    auto expectedScores = referenceScoresBTHD<float>(q, k, 1u);
+    scaleTensor(expectedScores, 0.5f);
+    auto expectedProbs = alpaka::onHost::allocHost<float>(expectedScores.getExtents());
+    for(auto idx : alpaka::IdxRange{expectedScores.getExtents()})
+        expectedProbs[idx] = expectedScores[idx];
+    referenceCausalSoftmaxInPlace(expectedProbs);
+    auto expectedOut = referenceApplyBTHD<float>(expectedProbs, v, 1u);
+
+    auto devQ = alpaka::onHost::allocLike(device, q);
+    auto devK = alpaka::onHost::allocLike(device, k);
+    auto devV = alpaka::onHost::allocLike(device, v);
+    auto devScores = alpaka::onHost::allocLike(device, scores);
+    auto devProbs = alpaka::onHost::allocLike(device, probs);
+    auto devOut = alpaka::onHost::allocLike(device, out);
+    alpaka::onHost::memcpy(queue, devQ, q);
+    alpaka::onHost::memcpy(queue, devK, k);
+    alpaka::onHost::memcpy(queue, devV, v);
+
+    alpaka::nn::onHost::nn::attentionScores<float>(
+        queue,
+        exec,
+        devQ,
+        devK,
+        devScores,
+        1u,
+        alpaka::nn::AttentionKvLayout::BTHD);
+    alpaka::nn::onHost::ops::scale<float>(queue, exec, devScores, 0.5f, devScores);
+    alpaka::nn::onHost::nn::causalSoftmax<float>(queue, exec, devScores, devProbs, 3u, 2u, 3u);
+    alpaka::nn::onHost::nn::attentionApply<float>(
+        queue,
+        exec,
+        devProbs,
+        devV,
+        devOut,
+        1u,
+        alpaka::nn::AttentionKvLayout::BTHD);
+    alpaka::onHost::memcpy(queue, scores, devScores);
+    alpaka::onHost::memcpy(queue, probs, devProbs);
+    alpaka::onHost::memcpy(queue, out, devOut);
+    alpaka::onHost::wait(queue);
+
+    for(auto idx : alpaka::IdxRange{scores.getExtents()})
+        alpaka::nn::test::checkValue(scores[idx], expectedScores[idx], 1.0e-5f, 1.0e-5f);
+    for(auto idx : alpaka::IdxRange{probs.getExtents()})
+        alpaka::nn::test::checkValue(probs[idx], expectedProbs[idx], 1.0e-5f, 1.0e-5f);
+    for(auto idx : alpaka::IdxRange{out.getExtents()})
+        alpaka::nn::test::checkValue(out[idx], expectedOut[idx], 1.0e-5f, 1.0e-5f);
+}
+
+TEMPLATE_LIST_TEST_CASE("decoder decode attention pipeline matches reference", "[nn][attention][decoder]", TestApis)
+{
+    auto cfg = TestType::makeDict();
+    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    if(!selector.isAvailable())
+    {
+        SUCCEED("No device available");
+        return;
+    }
+    auto device = selector.makeDevice(0);
+    auto exec = cfg[alpaka::object::exec];
+    auto queue = device.makeQueue();
+
+    auto q = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 1u, 4u, 4u});
+    auto k = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 5u, 4u});
+    auto v = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 5u, 4u});
+    auto scores = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 1u, 5u});
+    auto probs = alpaka::onHost::allocHost<float>(scores.getExtents());
+    auto out = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 1u, 4u, 4u});
+    fill4D(q, 0.375f);
+    fill4D(k, -0.0625f);
+    fill4D(v, 0.875f);
+
+    auto expectedScores = referenceScoresBHTD<float>(q, k, 1u);
+    scaleTensor(expectedScores, 0.5f);
+    auto expectedProbs = alpaka::onHost::allocHost<float>(expectedScores.getExtents());
+    for(auto idx : alpaka::IdxRange{expectedScores.getExtents()})
+        expectedProbs[idx] = expectedScores[idx];
+    referenceSoftmaxInPlace(expectedProbs);
+    auto expectedOut = referenceApplyBHTD<float>(expectedProbs, v, 1u);
+
+    auto devQ = alpaka::onHost::allocLike(device, q);
+    auto devK = alpaka::onHost::allocLike(device, k);
+    auto devV = alpaka::onHost::allocLike(device, v);
+    auto devScores = alpaka::onHost::allocLike(device, scores);
+    auto devProbs = alpaka::onHost::allocLike(device, probs);
+    auto devOut = alpaka::onHost::allocLike(device, out);
+    alpaka::onHost::memcpy(queue, devQ, q);
+    alpaka::onHost::memcpy(queue, devK, k);
+    alpaka::onHost::memcpy(queue, devV, v);
+
+    alpaka::nn::onHost::nn::attentionScores<float>(
+        queue,
+        exec,
+        devQ,
+        devK,
+        devScores,
+        1u,
+        alpaka::nn::AttentionKvLayout::BHTD);
+    alpaka::nn::onHost::ops::scale<float>(queue, exec, devScores, 0.5f, devScores);
+    alpaka::nn::onHost::nn::softmax<float>(queue, exec, devScores, devProbs, 3u);
+    alpaka::nn::onHost::nn::attentionApply<float>(
+        queue,
+        exec,
+        devProbs,
+        devV,
+        devOut,
+        1u,
+        alpaka::nn::AttentionKvLayout::BHTD);
+    alpaka::onHost::memcpy(queue, scores, devScores);
+    alpaka::onHost::memcpy(queue, probs, devProbs);
+    alpaka::onHost::memcpy(queue, out, devOut);
+    alpaka::onHost::wait(queue);
+
+    for(auto idx : alpaka::IdxRange{scores.getExtents()})
+        alpaka::nn::test::checkValue(scores[idx], expectedScores[idx], 1.0e-5f, 1.0e-5f);
+    for(auto idx : alpaka::IdxRange{probs.getExtents()})
+        alpaka::nn::test::checkValue(probs[idx], expectedProbs[idx], 1.0e-5f, 1.0e-5f);
+    for(auto idx : alpaka::IdxRange{out.getExtents()})
+        alpaka::nn::test::checkValue(out[idx], expectedOut[idx], 1.0e-5f, 1.0e-5f);
 }

@@ -362,8 +362,23 @@ TEMPLATE_LIST_TEST_CASE("tiny llama decodeStep matches greedy generation", "[mod
     auto const stepTopLogits = formatTopLogits<float>("decodeStep logits", hostStepLogits, 0u);
     INFO(stepTopLogits);
     maybePrintDiagnostic(stepTopLogits);
-    REQUIRE(alpaka::nn::onHost::inference::argmax<float>(hostStepLogits, 0u) == 6074u);
-    REQUIRE(cache.length(0u, 0u) == prompt.size() + 1u);
+    auto const next2 = alpaka::nn::onHost::inference::argmax<float>(hostStepLogits, 0u);
+    REQUIRE(next2 == 6074u);
+
+    auto step2Logits = alpaka::nn::onHost::model::decodeStep(queue, exec, model, cache, next2);
+    auto hostStep2Logits = alpaka::onHost::allocHost<float>(step2Logits.getExtents());
+    alpaka::onHost::memcpy(queue, hostStep2Logits, step2Logits);
+    alpaka::onHost::wait(queue);
+    auto const step2TopLogits = formatTopLogits<float>("decodeStep 2 logits", hostStep2Logits, 0u);
+    INFO(step2TopLogits);
+    maybePrintDiagnostic(step2TopLogits);
+
+    auto generated = alpaka::nn::onHost::inference::generateGreedy(queue, exec, model, prompt, 3u);
+    REQUIRE(generated.size() == prompt.size() + 3u);
+    REQUIRE(generated[4] == next);
+    REQUIRE(generated[5] == next2);
+    REQUIRE(generated[6] == alpaka::nn::onHost::inference::argmax<float>(hostStep2Logits, 0u));
+    REQUIRE(cache.length(0u, 0u) == prompt.size() + 2u);
 }
 
 TEMPLATE_LIST_TEST_CASE("tiny llama implicit and explicit prefill agree", "[model][decoder]", TestApis)
