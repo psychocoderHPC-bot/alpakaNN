@@ -20,22 +20,27 @@ namespace alpaka::nn::onAcc::internal::nn
 
         ALPAKA_FN_ACC void operator()(auto const& acc, auto scores, auto q, auto k) const
         {
+            auto iterExtents = scores.getExtents();
+            iterExtents[3] = 1u;
             for(auto idx : alpaka::onAcc::makeIdxMap(
                     acc,
                     alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{scores.getExtents()}))
+                    alpaka::IdxRange{iterExtents}))
             {
-                T_Type sum{};
                 auto const queryHead = static_cast<uint32_t>(idx[1]);
                 auto const kvHead = queryHead / queriesPerKvGroup;
-                for(uint32_t d = 0u; d < q.getExtents()[3]; ++d)
+                for(uint32_t keyToken = 0u; keyToken < scores.getExtents()[3]; ++keyToken)
                 {
-                    auto const key = kvLayout == alpaka::nn::AttentionKvLayout::BTHD
-                                         ? k[alpaka::Vec{idx[0], idx[3], kvHead, d}]
-                                         : k[alpaka::Vec{idx[0], kvHead, idx[3], d}];
-                    sum += q[alpaka::Vec{idx[0], idx[2], queryHead, d}] * key;
+                    T_Type sum{};
+                    for(uint32_t d = 0u; d < q.getExtents()[3]; ++d)
+                    {
+                        auto const key = kvLayout == alpaka::nn::AttentionKvLayout::BTHD
+                                             ? k[alpaka::Vec{idx[0], keyToken, kvHead, d}]
+                                             : k[alpaka::Vec{idx[0], kvHead, keyToken, d}];
+                        sum += q[alpaka::Vec{idx[0], idx[2], queryHead, d}] * key;
+                    }
+                    scores[alpaka::Vec{idx[0], idx[1], idx[2], keyToken}] = sum;
                 }
-                scores[idx] = sum;
             }
         }
     };
