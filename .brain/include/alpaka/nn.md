@@ -62,6 +62,12 @@
     - decode cache keys/values parity passes
     - decode reference-score parity passes
     - decode kernel `scores raw` can still diverge across spare cache capacities
+- `test/unit/nn/attention.cpp`
+  - Added `decoder decode attention cache-backed kv views are independent of spare capacity`.
+  - Current local signal:
+    - direct cache-backed decode attention parity passes across capacities
+    - if CUDA fails this direct test, the fault is inside attention/cache-view execution itself
+    - if CUDA passes it but decoder substages still fail, the remaining bug is in decoder-specific interaction or memory corruption around that path
 - `onAcc/internal/ops`
   - Operator kernels used by host-side launchers.
   - Kernel/validation rank queries use the same nvcc workaround as host code.
