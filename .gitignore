@@ -1,9 +1,11 @@
+# SPDX-FileCopyrightText: René Widera
 # SPDX-License-Identifier: MPL-2.0
 
 /docs/source/build/
 /docs/doxygen
 /docs/doxygen_dev
 /docs/cheatsheet/cheatsheet.pdf
+/models
 
 **/build*/
 
@@ -66,3 +68,22 @@ CMakeUserPresets.json
 # python environment for sphinx doc
 # is generated, if the user follows it official documentation
 alpaka-doc-env
+
+# test data and downloaded models
+testdata/
+build*/testdata/
+
+# environment folders
+.venv/
+.venv-*/
+venv*/
+env*/
+.env/
+
+# user specific config folders
+.codex/
+.opencode/
+.agents/
+
+# tmp files
+alpaka3_inference_todo.md
