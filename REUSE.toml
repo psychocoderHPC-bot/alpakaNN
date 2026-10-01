@@ -1,0 +1,23 @@
+version = 1
+SPDX-PackageName = "alpakaNN"
+SPDX-PackageSupplier = "Person: René Widera"
+SPDX-PackageDownloadLocation = "https://github.com/psychocoderHPC/alpakaNN"
+
+[[annotations]]
+path = [
+    ".clang-format",
+    ".gersemirc",
+    ".pre-commit-config.yaml",
+    "CMakePresets.json",
+    "README.md",
+    "REUSE.toml",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "René Widera"
+SPDX-License-Identifier = "MPL-2.0"
+
+[[annotations]]
+path = ["LICENSE", "LICENSES/MPL-2.0.txt"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "René Widera"
+SPDX-License-Identifier = "MPL-2.0"
