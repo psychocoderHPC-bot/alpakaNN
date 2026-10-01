@@ -173,7 +173,7 @@ namespace heatclosure
             , steps(checkedSteps(config))
             , dx(1.0 / static_cast<double>(config.n))
             , dt(config.tmax / static_cast<double>(steps))
-            , m_queue(&queue)
+            , m_queue(&checkedQueue(queue, device))
             , m_mode(mode)
             , m_u(alpaka::onHost::alloc<double>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n)}))
             , m_next(alpaka::onHost::alloc<double>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n)}))
@@ -301,6 +301,13 @@ namespace heatclosure
             m_hidden;
         decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{3u, 64u})) m_wgate, m_wup;
         decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{64u, 1u})) m_wdown;
+
+        static TQueue& checkedQueue(TQueue& queue, TDevice const& device)
+        {
+            if(queue.getDevice() != device)
+                throw std::invalid_argument("DeviceSolver queue and allocation device must match");
+            return queue;
+        }
 
         static std::size_t checkedSteps(Config const& c)
         {

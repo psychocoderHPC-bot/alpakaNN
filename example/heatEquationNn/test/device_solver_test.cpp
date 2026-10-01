@@ -29,6 +29,29 @@ try
     require(selector.isAvailable(), "host device unavailable");
     auto device = selector.makeDevice(0);
     auto queue = device.makeQueue();
+    if(selector.getDeviceCount() > 1)
+    {
+        auto otherDevice = selector.makeDevice(1);
+        bool mismatchedDeviceRejected = false;
+        try
+        {
+            heatclosure::Config mismatchedConfig;
+            mismatchedConfig.n = 2;
+            mismatchedConfig.tmax = 0.01;
+            std::vector<double> mismatchedInitial(4, 0.0);
+            heatclosure::DeviceSolver mismatched(
+                queue,
+                otherDevice,
+                mismatchedConfig,
+                heatclosure::CoefficientMode::uniform,
+                mismatchedInitial);
+        }
+        catch(std::invalid_argument const&)
+        {
+            mismatchedDeviceRejected = true;
+        }
+        require(mismatchedDeviceRejected, "queue on a different device was accepted");
+    }
     constexpr std::size_t n = 6;
     heatclosure::Config c;
     c.n = n;
