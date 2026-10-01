@@ -173,6 +173,16 @@ namespace heatclosure
         std::size_t const steps;
         double const dx, dt;
 
+        /** True if step() performs a device-to-host copy of the field/coefficients.
+         *
+         * The device-resident step path enqueues only asynchronous device kernels
+         * (feature packing, MLP stages, alpha mapping, stencil). It never copies a
+         * device buffer back to the host; explicit snapshots are the only D2H
+         * boundary. Kept as a compile-time constant so the CLI can report the
+         * property without guessing, and so the test can assert it.
+         */
+        static constexpr bool perStepHostCopy = false;
+
         DeviceSolver(
             TQueue& queue,
             TDevice const& device,

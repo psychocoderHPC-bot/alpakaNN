@@ -7,13 +7,16 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
+#include <concepts>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -65,6 +68,55 @@ namespace
         if(!file)
             throw std::runtime_error("failed writing snapshot: " + path.string());
     }
+
+    char const* materialName(heatclosure::CoefficientMode mode)
+    {
+        return mode == heatclosure::CoefficientMode::neural
+                   ? "nn"
+                   : (mode == heatclosure::CoefficientMode::preset ? "preset" : "uniform");
+    }
+
+    /** Streaming `x,y,u,alpha,mode,time,step` coefficient export.
+     *
+     * A single CSV collects every snapshot frame (`--frames` times) in file order.
+     * The `u` and `alpha` columns always describe the same instantaneous state.
+     */
+    class AlphaCsvWriter
+    {
+    public:
+        AlphaCsvWriter(std::filesystem::path const& path, std::size_t n) : m_file(path), m_n(n)
+        {
+            if(!m_file)
+                throw std::runtime_error("cannot create alpha export: " + path.string());
+            m_file << "x,y,u,alpha,mode,time,step\n" << std::setprecision(17);
+            if(!m_file)
+                throw std::runtime_error("failed writing alpha export header: " + path.string());
+        }
+
+        void frame(
+            std::vector<double> const& u,
+            std::vector<double> const& alpha,
+            heatclosure::CoefficientMode mode,
+            double time,
+            std::size_t step)
+        {
+            if(u.size() != m_n * m_n || alpha.size() != m_n * m_n)
+                throw std::invalid_argument("alpha export requires aligned u/alpha fields");
+            auto const dx = 1.0 / static_cast<double>(m_n);
+            auto const name = materialName(mode);
+            for(std::size_t y = 0; y < m_n; ++y)
+                for(std::size_t x = 0; x < m_n; ++x)
+                    m_file << (static_cast<double>(x) + 0.5) * dx << ',' << (static_cast<double>(y) + 0.5) * dx << ','
+                           << u[y * m_n + x] << ',' << alpha[y * m_n + x] << ',' << name << ',' << time << ',' << step
+                           << '\n';
+            if(!m_file)
+                throw std::runtime_error("failed writing alpha export");
+        }
+
+    private:
+        std::ofstream m_file;
+        std::size_t m_n;
+    };
 
     void dumpFeatures(
         std::filesystem::path const& path,
@@ -157,12 +209,18 @@ namespace
         std::size_t frames,
         bool noOutput,
         bool strict,
-        std::filesystem::path const& output)
+        std::filesystem::path const& output,
+        std::filesystem::path const& alphaExport)
     {
-        auto queue = device.makeQueue();
+        // The compute-only timing path uses queue events so accelerator work is
+        // measured without host-side synchronization inside the loop. Host timing
+        // is enabled too, so a plain steady_clock fallback is unnecessary.
+        auto queue = device.makeQueue(alpaka::queueKind::nonBlocking, alpaka::timing::enabled);
         std::vector<double> initial(config.n * config.n, 0.0);
         heatclosure::DeviceSolver solver(queue, device, config, mode, initial, model);
+        auto const exportAlpha = !alphaExport.empty();
         std::ofstream manifest;
+        std::optional<AlphaCsvWriter> alphaWriter;
         if(!noOutput)
         {
             std::filesystem::create_directories(output);
@@ -170,26 +228,51 @@ namespace
             if(!manifest)
                 throw std::runtime_error("cannot create output manifest");
             manifest << "frame,time,step,material,grid,beta\n";
+            if(exportAlpha)
+                alphaWriter.emplace(alphaExport, config.n);
+        }
+        else if(exportAlpha)
+        {
+            // A compute-only run may still be asked to export alpha; keep the
+            // directory handling explicit so the export never depends on --frames.
+            auto const parent = alphaExport.parent_path();
+            if(!parent.empty())
+                std::filesystem::create_directories(parent);
         }
         std::size_t frame = 0;
         auto save = [&](std::size_t step)
         {
             auto const state = solver.snapshot(queue);
-            std::ostringstream name;
-            name << "frame_" << std::setw(6) << std::setfill('0') << frame << ".csv";
-            writeCsv(output / name.str(), state, config.n);
             auto const time = static_cast<double>(step) * solver.dt;
-            auto const material = mode == heatclosure::CoefficientMode::neural
-                                      ? "nn"
-                                      : (mode == heatclosure::CoefficientMode::preset ? "preset" : "uniform");
-            manifest << frame << ',' << std::setprecision(17) << time << ',' << step << ',' << material << ','
-                     << config.n << ',' << config.beta << '\n';
-            if(!manifest)
-                throw std::runtime_error("failed writing output manifest");
+            if(!noOutput)
+            {
+                std::ostringstream name;
+                name << "frame_" << std::setw(6) << std::setfill('0') << frame << ".csv";
+                writeCsv(output / name.str(), state, config.n);
+                if(alphaWriter)
+                {
+                    // coefficientSnapshot recomputes alpha from the current device
+                    // state, so the exported alpha matches this exact u snapshot.
+                    auto const alpha = solver.coefficientSnapshot(queue, exec);
+                    alphaWriter->frame(state, alpha, mode, time, step);
+                }
+                manifest << frame << ',' << std::setprecision(17) << time << ',' << step << ',' << materialName(mode)
+                         << ',' << config.n << ',' << config.beta << '\n';
+                if(!manifest)
+                    throw std::runtime_error("failed writing output manifest");
+            }
+            else if(alphaWriter)
+            {
+                auto const alpha = solver.coefficientSnapshot(queue, exec);
+                alphaWriter->frame(state, alpha, mode, time, step);
+            }
             ++frame;
         };
-        if(!noOutput)
-            save(0);
+        // The initial state is saved (and its coefficient computed) before the
+        // first update so the export includes the t=0 field.
+        save(0);
+        auto const start = queue.makeEvent();
+        queue.enqueue(start);
         std::size_t nextFrame = 1;
         auto const outputs = frames > 1 ? frames - 1 : 1;
         for(std::size_t step = 1; step <= solver.steps; ++step)
@@ -208,6 +291,12 @@ namespace
                 }
             }
         }
+        auto const end = queue.makeEvent();
+        queue.enqueue(end);
+        alpaka::onHost::wait(queue);
+        std::optional<double> computeSeconds;
+        if constexpr(std::same_as<ALPAKA_TYPEOF(end.getTiming()), alpaka::timing::Enabled>)
+            computeSeconds = std::chrono::duration<double>(alpaka::onHost::getElapsedTime(start, end)).count();
         auto finalState = solver.snapshot(queue);
         if(!noOutput && frame < frames)
         {
@@ -220,12 +309,23 @@ namespace
         if(!std::isfinite(minU) || !std::isfinite(maxU)
            || (strict && (minU < -1e-10 || maxU > 1.0 + 1e-10)))
             throw std::runtime_error("temperature violates finite-value/maximum-principle check");
-        std::cout << "backend=" << backendName << " material="
-                  << (mode == heatclosure::CoefficientMode::neural
-                          ? "nn"
-                          : (mode == heatclosure::CoefficientMode::preset ? "preset" : "uniform"))
-                  << " grid=" << config.n << " steps=" << solver.steps << " dt=" << solver.dt << " final_range=["
-                  << minU << ',' << maxU << "]\n";
+        std::cout << "backend=" << backendName << " material=" << materialName(mode) << " grid=" << config.n
+                  << " steps=" << solver.steps << " dt=" << solver.dt << " final_range=[" << minU << ',' << maxU
+                  << "]\n";
+        if(noOutput)
+        {
+            std::cout << std::setprecision(17);
+            if(computeSeconds)
+            {
+                auto const total = *computeSeconds;
+                std::cout << "compute_only=1 total_seconds=" << total
+                          << " seconds_per_step=" << total / static_cast<double>(solver.steps)
+                          << " steps=" << solver.steps << '\n';
+            }
+            else
+                std::cout << "compute_only=1 total_seconds=unavailable steps=" << solver.steps << '\n';
+            std::cout << "nn_per_step_d2h=" << (solver.perStepHostCopy ? "yes" : "no") << " snapshots_d2h=yes\n";
+        }
         return 0;
     }
 
@@ -358,6 +458,7 @@ try
     std::string material = "preset", backend = "host", weights;
     std::filesystem::path output = "results/heat_closure";
     std::filesystem::path featurePath;
+    std::filesystem::path alphaExport;
     std::size_t frames = 121, sampleCount = 100000, seed = 0, temperatureSamples = 11;
     bool noOutput = false;
     for(int i = 1; i < argc; ++i)
@@ -373,6 +474,7 @@ try
         else if(arg == "--backend") backend = value(i, argc, argv);
         else if(arg == "--weights") weights = value(i, argc, argv);
         else if(arg == "--output") output = value(i, argc, argv);
+        else if(arg == "--export-alpha") alphaExport = value(i, argc, argv);
         else if(arg == "--frames") frames = parseCount(value(i, argc, argv), "--frames");
         else if(arg == "--dump-features") featurePath = value(i, argc, argv);
         else if(arg == "--samples") sampleCount = parseCount(value(i, argc, argv), "--samples");
@@ -383,7 +485,7 @@ try
         else if(arg == "--help")
         {
             std::cout << "--grid N --tmax T --steps N --material uniform|preset|nn --beta B --alpha-min A --alpha-max A "
-                         "--weights FILE --output DIR --frames N --no-output --validate-strict "
+                         "--weights FILE --output DIR --export-alpha CSV --frames N --no-output --validate-strict "
                          "--backend host|hip|cuda|oneapi|<device-index> "
                          "--dump-features CSV [--samples N --seed N --temperature-samples N]\n";
             return 0;
@@ -418,7 +520,20 @@ try
     return dispatchBackend(
         selection,
         [&](auto device, auto exec, std::string const& backendName)
-        { return run(device, exec, backendName, config, mode, modelPtr, frames, noOutput, config.validateStrict, output); });
+        {
+            return run(
+                device,
+                exec,
+                backendName,
+                config,
+                mode,
+                modelPtr,
+                frames,
+                noOutput,
+                config.validateStrict,
+                output,
+                alphaExport);
+        });
 }
 catch(std::exception const& e)
 {

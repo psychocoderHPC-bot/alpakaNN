@@ -4,11 +4,17 @@
 
 #include <alpaka/alpaka.hpp>
 
+#include <array>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 
 void require(bool condition, char const* message)
 {
@@ -20,6 +26,70 @@ double sum(std::vector<double> const& values)
 {
     return std::accumulate(values.begin(), values.end(), 0.0);
 }
+
+namespace
+{
+    int runCommand(std::string const& command)
+    {
+        return std::system(command.c_str());
+    }
+
+    std::string quote(std::filesystem::path const& path)
+    {
+        return "\"" + path.string() + "\"";
+    }
+
+    /** Read a streaming `x,y,u,alpha,mode,time,step` export, validating the header. */
+    std::vector<std::array<std::string, 7>> readAlphaCsv(std::filesystem::path const& path)
+    {
+        std::ifstream file(path);
+        require(static_cast<bool>(file), "cannot open exported alpha CSV");
+        std::string header;
+        std::getline(file, header);
+        require(header == "x,y,u,alpha,mode,time,step", "alpha CSV header mismatch");
+        std::vector<std::array<std::string, 7>> rows;
+        std::string line;
+        while(std::getline(file, line))
+        {
+            if(line.empty())
+                continue;
+            std::array<std::string, 7> columns;
+            std::size_t start = 0;
+            std::size_t count = 0;
+            while(count < columns.size())
+            {
+                auto const comma = line.find(',', start);
+                auto const end = comma == std::string::npos ? line.size() : comma;
+                columns[count++] = line.substr(start, end - start);
+                if(end == line.size())
+                    break;
+                start = end + 1;
+            }
+            require(count == columns.size(), "alpha CSV row has the wrong column count");
+            rows.push_back(columns);
+        }
+        return rows;
+    }
+
+    std::string readFile(std::filesystem::path const& path)
+    {
+        std::ifstream file(path);
+        require(static_cast<bool>(file), "cannot read command output");
+        std::ostringstream buffer;
+        buffer << file.rdbuf();
+        return buffer.str();
+    }
+
+    /** Extract the numeric value following `key` in a report line. */
+    double fieldValue(std::string const& text, std::string const& key)
+    {
+        auto const position = text.find(key);
+        require(position != std::string::npos, "compute-only report is missing a field");
+        auto const begin = position + key.size();
+        auto const end = text.find_first_of(" \n", begin);
+        return std::stod(text.substr(begin, end - begin));
+    }
+} // namespace
 
 struct FakeDevice
 {
@@ -221,6 +291,69 @@ try
         require(std::abs(neuralAlpha[i] - expectedNeuralAlpha[i]) < 2e-6, "NN post-step coefficient parity mismatch");
     for(double value : neuralAlpha)
         require(std::isfinite(value) && value >= model.alphaMin && value <= model.alphaMax, "NN coefficient invalid");
+
+    // The device step path must not copy anything to the host; only explicit
+    // snapshots may synchronize.
+    require(!heatclosure::DeviceSolver<decltype(queue), decltype(device)>::perStepHostCopy, "step path performs a D2H copy");
+
+    // Exercise the CLI `--export-alpha` / compute-only timing paths end-to-end for
+    // the preset and neural coefficient modes on the host backend.
+    auto const base = std::filesystem::temp_directory_path()
+                      / ("heatEquationNn_export_" + std::to_string(static_cast<unsigned long long>(std::rand())));
+    auto const presetDir = base / "preset";
+    auto const nnDir = base / "nn";
+    std::filesystem::create_directories(base);
+    auto const grid = std::string{"16"};
+    auto const tmax = std::string{"0.01"};
+
+    // preset: exported alpha must equal alphaTrue(x,y,u) for the exported u.
+    auto const presetCsv = base / "preset_alpha.csv";
+    auto const presetCommand = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material preset --grid " + grid
+                               + " --tmax " + tmax + " --frames 3 --output " + quote(presetDir)
+                               + " --export-alpha " + quote(presetCsv) + " > " + quote(base / "preset.log") + " 2>&1";
+    require(runCommand(presetCommand) == 0, "preset export-alpha run failed");
+    auto const presetRows = readAlphaCsv(presetCsv);
+    require(presetRows.size() == 3 * static_cast<std::size_t>(16 * 16), "preset export should hold three frames");
+    for(auto const& row : presetRows)
+    {
+        require(row[4] == "preset", "preset export carries the wrong mode");
+        auto const x = std::stod(row[0]);
+        auto const y = std::stod(row[1]);
+        auto const u = std::stod(row[2]);
+        auto const alpha = std::stod(row[3]);
+        auto const expected = heatclosure::alphaTrue(x, y, u, 0.5);
+        require(std::abs(alpha - expected) < 1e-14, "preset export alpha does not match alphaTrue");
+    }
+
+    // nn: exported alpha must stay within the model bounds and use the nn mode.
+    auto const nnCsv = base / "nn_alpha.csv";
+    auto const nnCommand = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material nn --grid " + grid + " --tmax "
+                           + tmax + " --frames 3 --weights " + quote(modelPath) + " --output " + quote(nnDir)
+                           + " --export-alpha " + quote(nnCsv) + " > " + quote(base / "nn.log") + " 2>&1";
+    require(runCommand(nnCommand) == 0, "nn export-alpha run failed");
+    auto const nnRows = readAlphaCsv(nnCsv);
+    require(nnRows.size() == 3 * static_cast<std::size_t>(16 * 16), "nn export should hold three frames");
+    for(auto const& row : nnRows)
+    {
+        require(row[4] == "nn", "nn export carries the wrong mode");
+        auto const alpha = std::stod(row[3]);
+        require(std::isfinite(alpha) && alpha >= model.alphaMin && alpha <= model.alphaMax, "exported NN alpha out of bounds");
+    }
+
+    // compute-only timing: `--no-output` must still exit 0 and report steps plus
+    // the no-per-step-D2H property.
+    auto const timingCommand = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material nn --grid " + grid
+                               + " --tmax " + tmax + " --weights " + quote(modelPath) + " --no-output > "
+                               + quote(base / "timing.log") + " 2>&1";
+    require(runCommand(timingCommand) == 0, "compute-only timing run failed");
+    auto const timingReport = readFile(base / "timing.log");
+    require(timingReport.find("compute_only=1") != std::string::npos, "compute-only report missing");
+    require(timingReport.find("nn_per_step_d2h=no") != std::string::npos, "NN path reported a per-step D2H copy");
+    require(fieldValue(timingReport, "total_seconds=") >= 0.0, "compute-only total time is invalid");
+    require(fieldValue(timingReport, "seconds_per_step=") >= 0.0, "compute-only seconds-per-step is invalid");
+    require(fieldValue(timingReport, "steps=") > 0.0, "compute-only step count is invalid");
+
+    std::filesystem::remove_all(base);
     std::cout << "device solver checks passed\n";
 }
 catch(std::exception const& error)

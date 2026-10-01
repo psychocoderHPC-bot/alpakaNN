@@ -13,8 +13,13 @@ if(BUILD_TESTING)
     target_link_libraries(heatEquationNn_device_solver_test PRIVATE alpaka::nn alpaka::alpaka)
     target_compile_definitions(
         heatEquationNn_device_solver_test
-        PRIVATE HEAT_CLOSURE_MODEL_DIR="${PROJECT_SOURCE_DIR}/models/heat_closure"
+        PRIVATE
+            HEAT_CLOSURE_MODEL_DIR="${PROJECT_SOURCE_DIR}/models/heat_closure"
+            HEAT_CLOSURE_EXAMPLE_BIN="$<TARGET_FILE:heatEquationNn>"
+            HEAT_CLOSURE_TEST_TMP_DIR="$<TARGET_FILE_DIR:heatEquationNn_device_solver_test>"
     )
+    # The CLI export/timing checks below execute the example binary, so it must be built first.
+    add_dependencies(heatEquationNn_device_solver_test heatEquationNn)
     alpaka_finalize(heatEquationNn_device_solver_test)
     add_test(NAME heatEquationNn_device_solver COMMAND heatEquationNn_device_solver_test)
 endif()
