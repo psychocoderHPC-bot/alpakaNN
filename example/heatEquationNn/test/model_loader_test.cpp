@@ -93,6 +93,13 @@ try
     };
     write(metadata, compact(original));
     (void) heatclosure::loadModel(weights, 0.5); // legal whitespace variation
+    auto escaped = original;
+    auto escapedPos = escaped.find("alpakaNN-heat-closure-f32-v1");
+    if(escapedPos == std::string::npos)
+        throw std::runtime_error("Unicode escape test target missing");
+    escaped.replace(escapedPos, 1, "\\u0061");
+    write(metadata, escaped);
+    (void) heatclosure::loadModel(weights, 0.5); // JSON Unicode escape decodes to the same manifest value
     auto mutation = [&](std::string const& before, std::string const& after, std::string const& label)
     {
         auto altered = original;
@@ -138,6 +145,7 @@ try
     mutation("\"beta\": 0.5", "\"beta\": 0.6", "beta");
     mutation("\"alpha_min\": 0.01", "\"alpha_min\": -0.01", "alpha minimum");
     mutation("\"alpha_max\": 6.0", "\"alpha_max\": 0.0", "alpha maximum");
+    mutation("\"alpha_max\": 6.0", "\"alpha_max\": 5.0", "alpha bounds clip true coefficient range");
     mutation("\"width\": 64", "\"width\": 32", "width");
     mutation("\"weights_file\": \"weights.bin\"", "\"weights_file\": \"different.bin\"", "declared weights name");
     mutation(

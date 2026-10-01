@@ -71,6 +71,49 @@ namespace heatclosure
                 throw std::runtime_error("malformed model JSON metadata");
             }
 
+            uint16_t hex4()
+            {
+                uint16_t value = 0;
+                for(int i = 0; i < 4; ++i)
+                {
+                    char c = take();
+                    value = static_cast<uint16_t>(value << 4);
+                    if(c >= '0' && c <= '9')
+                        value = static_cast<uint16_t>(value + c - '0');
+                    else if(c >= 'a' && c <= 'f')
+                        value = static_cast<uint16_t>(value + c - 'a' + 10);
+                    else if(c >= 'A' && c <= 'F')
+                        value = static_cast<uint16_t>(value + c - 'A' + 10);
+                    else
+                        fail();
+                }
+                return value;
+            }
+
+            static void appendUtf8(std::string& out, uint32_t codepoint)
+            {
+                if(codepoint <= 0x7f)
+                    out += static_cast<char>(codepoint);
+                else if(codepoint <= 0x7ff)
+                {
+                    out += static_cast<char>(0xc0 | (codepoint >> 6));
+                    out += static_cast<char>(0x80 | (codepoint & 0x3f));
+                }
+                else if(codepoint <= 0xffff)
+                {
+                    out += static_cast<char>(0xe0 | (codepoint >> 12));
+                    out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
+                    out += static_cast<char>(0x80 | (codepoint & 0x3f));
+                }
+                else
+                {
+                    out += static_cast<char>(0xf0 | (codepoint >> 18));
+                    out += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f));
+                    out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
+                    out += static_cast<char>(0x80 | (codepoint & 0x3f));
+                }
+            }
+
             std::string str()
             {
                 if(take() != '"')
@@ -98,8 +141,24 @@ namespace heatclosure
                             out += '\r';
                         else if(c == 't')
                             out += '\t';
+                        else if(c == 'u')
+                        {
+                            uint32_t cp = hex4();
+                            if(cp >= 0xd800 && cp <= 0xdbff)
+                            {
+                                if(take() != '\\' || take() != 'u')
+                                    fail();
+                                uint32_t low = hex4();
+                                if(low < 0xdc00 || low > 0xdfff)
+                                    fail();
+                                cp = 0x1'0000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
+                            }
+                            else if(cp >= 0xdc00 && cp <= 0xdfff)
+                                fail();
+                            appendUtf8(out, cp);
+                        }
                         else
-                            fail(); // Unicode escapes are not needed by the ASCII manifest.
+                            fail();
                     }
                     else
                         out += c;
@@ -397,8 +456,16 @@ namespace heatclosure
         out.alphaMin = detail::get(m, "alpha_min").number();
         out.alphaMax = detail::get(m, "alpha_max").number();
         out.beta = detail::get(m, "beta").number();
+        // The reference material has base coefficient in [0.02, 4.0] and
+        // temperature u in [0, 1]. Physical output bounds may be wider than
+        // this envelope (e.g. for recomputed datasets), but may not clip it.
+        auto temperatureFactor = 1.0 + out.beta;
+        auto requiredMinimum = 0.02 * std::min(1.0, temperatureFactor);
+        auto requiredMaximum = 4.0 * std::max(1.0, temperatureFactor);
         if(!std::isfinite(out.alphaMin) || !std::isfinite(out.alphaMax) || !std::isfinite(out.beta)
-           || !(out.alphaMin > 0 && out.alphaMax > out.alphaMin) || !std::isfinite(beta) || beta != out.beta)
+           || !(out.beta > -1.0) || !(out.alphaMin > 0 && out.alphaMax > out.alphaMin)
+           || out.alphaMin > requiredMinimum || out.alphaMax < requiredMaximum || !std::isfinite(beta)
+           || beta != out.beta)
             throw std::runtime_error("invalid model bounds or beta mismatch");
         std::ifstream f(weights, std::ios::binary);
         if(!f)
