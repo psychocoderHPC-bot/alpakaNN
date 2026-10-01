@@ -23,10 +23,12 @@ The NN model is a companion pair: `weights.bin` and `weights.bin.metadata.json`.
 The loader accepts only `alpakaNN-heat-closure-f32-v1`, bias-free gated-SiLU
 architecture, float32 little-endian row-major gate/up/down arrays of shapes
 `[3,64]`, `[3,64]`, `[64,1]` (1792 bytes total), feature order `[u,x,y]`,
-and a matching beta. Every scalar and parameter is checked for finiteness;
-alpha bounds must be positive and ordered. Outputs are mapped to physical
-coefficient units as `alpha_min + (alpha_max-alpha_min)*sigmoid(z)`. Model
-bounds/beta must match CLI options. Train/regenerate via
+and a matching beta. Weight payload size and finiteness are checked; alpha
+bounds must be positive and ordered. The current lightweight metadata reader is
+format-sensitive and does not validate every declared semantic field, so it is
+not a general JSON-schema validator. Outputs are mapped to physical coefficient
+units as `alpha_min + (alpha_max-alpha_min)*sigmoid(z)`. Model bounds/beta must
+match CLI options. Train/regenerate via
 `python3 tools/train_heat_closure.py --help` (PyTorch required).
 
 **This checkpoint is not a validated accurate closure.** Its metadata reports
