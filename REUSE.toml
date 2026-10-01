@@ -5,6 +5,23 @@ SPDX-PackageDownloadLocation = "https://github.com/psychocoderHPC/alpakaNN"
 
 [[annotations]]
 path = [
+    "example/heatEquationNn/CMakeLists.txt",
+    "example/heatEquationNn/README.md",
+    "example/heatEquationNn/src/*.hpp",
+    "example/heatEquationNn/src/*.cpp",
+    "example/heatEquationNn/test/*.cpp",
+    "models/heat_closure/*",
+    "presentation_notes.md",
+    "validation_report.md",
+    "tools/*.py",
+    "tools/tests/*.py",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "René Widera"
+SPDX-License-Identifier = "MPL-2.0"
+
+[[annotations]]
+path = [
     ".clang-format",
     ".gersemirc",
     ".pre-commit-config.yaml",

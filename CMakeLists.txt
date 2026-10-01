@@ -18,6 +18,7 @@ include(CMakePackageConfigHelpers)
 include(FetchContent)
 
 option(alpakaNN_BUILD_TESTS "Build alpakaNN unit tests." ${PROJECT_IS_TOP_LEVEL})
+option(alpakaNN_BUILD_HEAT_CLOSURE_EXAMPLE "Build the conservative heat-closure reference example." OFF)
 set(alpaka_COMPILE_PEDANTIC ON CACHE BOOL "Compile all code with strict compiler settings." FORCE)
 
 if(alpaka_DEP_HIP)
@@ -81,6 +82,11 @@ if(alpakaNN_BUILD_TESTS)
     include(CTest)
     enable_testing()
     add_subdirectory(test)
+endif()
+
+if(alpakaNN_BUILD_HEAT_CLOSURE_EXAMPLE)
+    include(CTest)
+    add_subdirectory(example/heatEquationNn)
 endif()
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

@@ -1,0 +1,112 @@
+{
+  "alpha_max": 6.0,
+  "alpha_min": 0.01,
+  "architecture": "gated_silu_bias_free_v1",
+  "beta": 0.5,
+  "beta_mismatch_policy": "reject",
+  "coordinate_domain": [
+    0.0,
+    1.0
+  ],
+  "dtype": "float32",
+  "feature_order": [
+    "u",
+    "x",
+    "y"
+  ],
+  "format": "alpakaNN-heat-closure-f32-v1",
+  "history_file": "weights.history.json",
+  "kind": "trained_model",
+  "material_formula": "base(x,y) * (1 + beta*u); inclusion if r2 < 0.12^2 => 0.02; else conductor if abs(y-0.5)<0.05 and 0.45<x<0.65 => 4.0; else 0.5+0.4*H(sin(6*pi*y)), H(z)=1 iff z>=0",
+  "metrics": {
+    "spatial_eval": {
+      "count": 6678,
+      "mae": 0.6023516058921814,
+      "max_abs": 2.3224167823791504,
+      "mse": 0.48545342683792114
+    },
+    "spatial_eval_by_region": {
+      "background_low": {
+        "count": 3331,
+        "mae": 0.3891129791736603,
+        "max_abs": 0.6874951124191284,
+        "mse": 0.1817546933889389
+      },
+      "stripe_high": {
+        "count": 3347,
+        "mae": 0.8145708441734314,
+        "max_abs": 2.3224167823791504,
+        "mse": 0.7877002954483032
+      }
+    },
+    "validation": {
+      "count": 6941,
+      "mae": 0.5190092921257019,
+      "max_abs": 3.9792065620422363,
+      "mse": 0.6540749073028564
+    },
+    "validation_by_region": {
+      "background_low": {
+        "count": 2913,
+        "mae": 0.28634995222091675,
+        "max_abs": 2.0110113620758057,
+        "mse": 0.19950458407402039
+      },
+      "conductor": {
+        "count": 308,
+        "mae": 2.8427071571350098,
+        "max_abs": 3.9792065620422363,
+        "mse": 8.245465278625488
+      },
+      "inclusion": {
+        "count": 528,
+        "mae": 0.9113690853118896,
+        "max_abs": 1.9645087718963623,
+        "mse": 1.0171213150024414
+      },
+      "stripe_high": {
+        "count": 3192,
+        "mae": 0.4422147274017334,
+        "max_abs": 1.8020044565200806,
+        "mse": 0.2763577401638031
+      }
+    }
+  },
+  "output": "alpha_min + (alpha_max - alpha_min) * sigmoid(z)",
+  "temperature_domain": [
+    0.0,
+    1.0
+  ],
+  "training": {
+    "batch_size": 4096,
+    "best_epoch": 1989,
+    "best_validation_mse": 0.6540749073028564,
+    "device": "cpu",
+    "duration_seconds": 230.27936601638794,
+    "epochs_requested": 2000,
+    "epochs_run": 2000,
+    "learning_rate": 0.001,
+    "loss": "physical coefficient MSE",
+    "optimizer": "Adam",
+    "seed": 0
+  },
+  "training_csv_sha256": "dfaf6994c19cac6de27c89876278ff72ab52bf1c38fd31d56d32e64dd3a0d54d",
+  "weight_layout": "row-major [in,out], little-endian float32; gate,up,down concatenated",
+  "weight_shapes": [
+    [
+      3,
+      64
+    ],
+    [
+      3,
+      64
+    ],
+    [
+      64,
+      1
+    ]
+  ],
+  "weights_file": "weights.bin",
+  "weights_sha256": "f075cffd50324e17434713d5f9479fb02375eefc712565e2dbfcfd54ac82bf01",
+  "width": 64
+}
