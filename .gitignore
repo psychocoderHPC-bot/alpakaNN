@@ -87,3 +87,13 @@ env*/
 
 # tmp files
 alpaka3_inference_todo.md
+
+# generated heat-closure run outputs (large CSV/PNG/MP4/logs/summaries); curated manifests stay tracked
+/results/heat_closure/**/*.csv
+/results/heat_closure/**/*.log
+/results/heat_closure/**/*.nohup
+/results/heat_closure/**/*.png
+/results/heat_closure/**/*.mp4
+/results/heat_closure/**/summary.json
+/results/heat_closure/**/summary.md
+/results/heat_closure/**/README.md
