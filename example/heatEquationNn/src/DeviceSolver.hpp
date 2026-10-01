@@ -26,6 +26,17 @@ namespace heatclosure
 
     namespace device_detail
     {
+        /** Check the value-level queue/device association independently of allocation.
+         * Kept generic so this precondition can be unit-tested without physical devices.
+         */
+        template<class TQueue, class TDevice>
+        TQueue& checkedQueue(TQueue& queue, TDevice const& device)
+        {
+            if(queue.getDevice() != device)
+                throw std::invalid_argument("DeviceSolver queue and allocation device must match");
+            return queue;
+        }
+
         struct PackFeatures
         {
             double dx;
@@ -304,9 +315,7 @@ namespace heatclosure
 
         static TQueue& checkedQueue(TQueue& queue, TDevice const& device)
         {
-            if(queue.getDevice() != device)
-                throw std::invalid_argument("DeviceSolver queue and allocation device must match");
-            return queue;
+            return device_detail::checkedQueue(queue, device);
         }
 
         static std::size_t checkedSteps(Config const& c)

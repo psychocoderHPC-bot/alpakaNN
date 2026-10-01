@@ -21,37 +21,47 @@ double sum(std::vector<double> const& values)
     return std::accumulate(values.begin(), values.end(), 0.0);
 }
 
+struct FakeDevice
+{
+    int id;
+    friend bool operator==(FakeDevice const&, FakeDevice const&) = default;
+};
+
+struct FakeQueue
+{
+    FakeDevice device;
+
+    FakeDevice const& getDevice() const
+    {
+        return device;
+    }
+};
+
 int main()
 try
 {
+    // Exercise the exact production queue/device predicate without depending on
+    // the host selector exposing two physical devices.
+    FakeQueue matchingQueue{{1}};
+    require(
+        &heatclosure::device_detail::checkedQueue(matchingQueue, FakeDevice{1}) == &matchingQueue,
+        "matching queue/device was rejected");
+    bool mismatchedDeviceRejected = false;
+    try
+    {
+        (void) heatclosure::device_detail::checkedQueue(matchingQueue, FakeDevice{2});
+    }
+    catch(std::invalid_argument const&)
+    {
+        mismatchedDeviceRejected = true;
+    }
+    require(mismatchedDeviceRejected, "queue associated with a different device was accepted");
+
     auto selector = alpaka::onHost::makeDeviceSelector(
         alpaka::onHost::makeDeviceSpec(alpaka::onHost::DeviceSpec{alpaka::api::host, alpaka::deviceKind::cpu}));
     require(selector.isAvailable(), "host device unavailable");
     auto device = selector.makeDevice(0);
     auto queue = device.makeQueue();
-    if(selector.getDeviceCount() > 1)
-    {
-        auto otherDevice = selector.makeDevice(1);
-        bool mismatchedDeviceRejected = false;
-        try
-        {
-            heatclosure::Config mismatchedConfig;
-            mismatchedConfig.n = 2;
-            mismatchedConfig.tmax = 0.01;
-            std::vector<double> mismatchedInitial(4, 0.0);
-            heatclosure::DeviceSolver mismatched(
-                queue,
-                otherDevice,
-                mismatchedConfig,
-                heatclosure::CoefficientMode::uniform,
-                mismatchedInitial);
-        }
-        catch(std::invalid_argument const&)
-        {
-            mismatchedDeviceRejected = true;
-        }
-        require(mismatchedDeviceRejected, "queue on a different device was accepted");
-    }
     constexpr std::size_t n = 6;
     heatclosure::Config c;
     c.n = n;
