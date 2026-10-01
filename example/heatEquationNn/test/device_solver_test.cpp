@@ -572,8 +572,7 @@ try
                 // are legitimate skips. Any other nonzero exit is a real runtime
                 // failure of a backend that is compiled and was expected to run,
                 // so it must fail the test rather than be silently skipped.
-                bool const notCompiledIn
-                    = reason.find("is not compiled in (compiled backends:") != std::string::npos;
+                bool const notCompiledIn = reason.find("is not compiled in (compiled backends:") != std::string::npos;
                 bool const compiledButUnavailable
                     = reason.find("is compiled in but no device is available at runtime") != std::string::npos;
                 if(!notCompiledIn && !compiledButUnavailable)
