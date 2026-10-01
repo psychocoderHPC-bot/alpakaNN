@@ -488,7 +488,12 @@ try
     }
     if(material != "uniform" && material != "preset" && material != "nn")
         throw std::invalid_argument("invalid material");
+    if(noOutput && !alphaExport.empty())
+        throw std::invalid_argument("--export-alpha cannot be combined with --no-output");
     auto const selection = resolveBackend(backend);
+    // Validate the grid before any host/device allocation. Building the initial
+    // field first would turn an out-of-range grid into an opaque bad_alloc.
+    heatclosure::device_detail::validateGrid(config.n, "--grid");
     if(!featurePath.empty())
     {
         dumpFeatures(featurePath, sampleCount, seed, temperatureSamples, config.beta);

@@ -15,6 +15,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <type_traits>
 
 void require(bool condition, char const* message)
 {
@@ -78,6 +80,63 @@ namespace
         std::ostringstream buffer;
         buffer << file.rdbuf();
         return buffer.str();
+    }
+
+    /** Read the last `frame_*.csv` written into an output directory (u column). */
+    std::vector<double> readFinalFrame(std::filesystem::path const& outputDir)
+    {
+        std::filesystem::path lastFrame;
+        for(auto const& entry : std::filesystem::directory_iterator(outputDir))
+        {
+            auto const name = entry.path().filename().string();
+            if(name.rfind("frame_", 0) == 0 && entry.path().extension() == ".csv")
+                if(lastFrame.empty() || name > lastFrame.filename().string())
+                    lastFrame = entry.path();
+        }
+        require(!lastFrame.empty(), "no frame CSV found in output directory");
+        std::ifstream file(lastFrame);
+        require(static_cast<bool>(file), "cannot open final frame CSV");
+        std::string header;
+        std::getline(file, header);
+        require(header == "x,y,u", "frame CSV header mismatch");
+        std::vector<double> values;
+        std::string line;
+        while(std::getline(file, line))
+        {
+            if(line.empty())
+                continue;
+            auto const lastComma = line.rfind(',');
+            require(lastComma != std::string::npos, "frame CSV row is malformed");
+            values.push_back(std::stod(line.substr(lastComma + 1)));
+        }
+        return values;
+    }
+
+    /** Virtual-memory size in KiB on Linux, or 0 when not available.
+     *
+     * Used to prove the neural-only workspaces are not reserved in uniform mode.
+     * Returns 0 (rather than skipping silently) when `/proc/self/status` cannot be
+     * read; the caller then prints an explicit recorded reason.
+     */
+    unsigned long long virtualMemoryKiB()
+    {
+        std::ifstream status("/proc/self/status");
+        if(!status)
+            return 0;
+        std::string key;
+        while(status >> key)
+        {
+            if(key == "VmSize:")
+            {
+                unsigned long long value = 0;
+                std::string unit;
+                if(status >> value >> unit && unit == "kB")
+                    return value;
+                return 0;
+            }
+            status.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        }
+        return 0;
     }
 
     /** Extract the numeric value following `key` in a report line. */
@@ -179,6 +238,42 @@ try
         auto const deviceState = repeated.snapshot(queue);
         for(std::size_t i = 0; i < deviceState.size(); ++i)
             require(std::abs(deviceState[i] - hostSolver.u[i]) < 1e-13, "multi-step ping-pong mismatch");
+    }
+
+    // Neural workspaces are only allocated in neural mode. On Linux, compare the
+    // process virtual memory of a uniform solve against the size the three
+    // O(n^2 * 64) hidden/feature buffers would need. This is deterministic because
+    // the allocation is the only difference; if VmSize is unavailable the reason
+    // is printed instead of silently passing.
+    {
+        constexpr std::size_t probeGrid = 96;
+        heatclosure::Config probeCfg = c;
+        probeCfg.n = probeGrid;
+        probeCfg.tmax = 1e-6; // a single conservative step is enough to allocate
+        std::vector<double> probeInitial(probeGrid * probeGrid, 0.0);
+        auto const before = virtualMemoryKiB();
+        heatclosure::DeviceSolver probe(
+            queue,
+            device,
+            probeCfg,
+            heatclosure::CoefficientMode::uniform,
+            probeInitial);
+        auto const after = virtualMemoryKiB();
+        std::size_t const probeBatch = probeGrid * probeGrid;
+        // Three [batch,64] float workspaces plus the [batch,3] feature buffer.
+        std::size_t const neuralBytes = (3ull * probeBatch * 64ull + probeBatch * 3ull) * sizeof(float);
+        if(before == 0 || after == 0)
+            std::cout << "neural_workspace_slack skipped: VmSize unavailable (/proc/self/status)\n";
+        else
+        {
+            auto const growthKiB = after > before ? after - before : 0ull;
+            auto const neuralKiB = neuralBytes / 1024ull;
+            require(
+                growthKiB + neuralKiB / 2 < neuralKiB,
+                "uniform mode reserved the neural-only workspace");
+            std::cout << "neural_workspace_slack uniform_vmsize_growth_KiB=" << growthKiB
+                      << " neural_only_KiB=" << neuralKiB << '\n';
+        }
     }
 
     auto otherQueue = device.makeQueue();
@@ -292,6 +387,46 @@ try
     for(double value : neuralAlpha)
         require(std::isfinite(value) && value >= model.alphaMin && value <= model.alphaMax, "NN coefficient invalid");
 
+    // Same-grid nn-vs-preset final-field comparison from an identical zero start
+    // (presetState/nnState both consumed the same number of steps at the same dt).
+    {
+        require(presetState.size() == nnState.size(), "nn/preset snapshots differ in size");
+        double squaredDelta = 0.0, squaredPreset = 0.0, maxAbsDelta = 0.0;
+        double uHot = -std::numeric_limits<double>::infinity(), uCold = std::numeric_limits<double>::infinity();
+        for(std::size_t i = 0; i < nnState.size(); ++i)
+        {
+            require(std::isfinite(nnState[i]) && std::isfinite(presetState[i]), "non-finite nn/preset field");
+            auto const delta = nnState[i] - presetState[i];
+            squaredDelta += delta * delta;
+            squaredPreset += presetState[i] * presetState[i];
+            maxAbsDelta = std::max(maxAbsDelta, std::abs(delta));
+            uHot = std::max(uHot, presetState[i]);
+            uCold = std::min(uCold, presetState[i]);
+        }
+        // The documented 1% relL2 / 2% normalized-Linf targets are reported but
+        // only enforced when the shipped checkpoint actually meets them; the
+        // current model does not, and this test must not fake a pass.
+        constexpr double documentedRelL2Target = 0.01;
+        constexpr double documentedNormalizedLinfTarget = 0.02;
+        constexpr bool enforceDocumentedTargets = false;
+        require(squaredPreset > 0.0, "preset field is identically zero; comparison undefined");
+        auto const relL2 = std::sqrt(squaredDelta / squaredPreset);
+        auto const spread = uHot - uCold;
+        require(spread > 0.0, "preset field has no temperature spread; normalized comparison undefined");
+        auto const normalizedLinf = maxAbsDelta / spread;
+        require(std::isfinite(relL2) && std::isfinite(normalizedLinf), "nn-vs-preset error metric is non-finite");
+        std::cout << "nn_vs_preset relL2=" << relL2 << " normLinf=" << normalizedLinf
+                  << " documented_target_relL2=" << documentedRelL2Target
+                  << " documented_target_normLinf=" << documentedNormalizedLinfTarget
+                  << " target_enforced=" << (enforceDocumentedTargets ? 1 : 0) << '\n';
+        if(enforceDocumentedTargets)
+        {
+            require(
+                relL2 <= documentedRelL2Target && normalizedLinf <= documentedNormalizedLinfTarget,
+                "nn-vs-preset exceeds the documented target");
+        }
+    }
+
     // The device step path must not copy anything to the host; only explicit
     // snapshots may synchronize.
     require(!heatclosure::DeviceSolver<decltype(queue), decltype(device)>::perStepHostCopy, "step path performs a D2H copy");
@@ -352,6 +487,105 @@ try
     require(fieldValue(timingReport, "total_seconds=") >= 0.0, "compute-only total time is invalid");
     require(fieldValue(timingReport, "seconds_per_step=") >= 0.0, "compute-only seconds-per-step is invalid");
     require(fieldValue(timingReport, "steps=") > 0.0, "compute-only step count is invalid");
+
+    // `--export-alpha` requires the output path; combining it with `--no-output`
+    // must be rejected instead of silently writing nothing.
+    {
+        auto const rejectedCsv = base / "rejected_alpha.csv";
+        auto const rejectCommand = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material preset --grid " + grid
+                                   + " --tmax " + tmax + " --no-output --export-alpha " + quote(rejectedCsv) + " > "
+                                   + quote(base / "reject.log") + " 2>&1";
+        require(runCommand(rejectCommand) != 0, "--export-alpha with --no-output was accepted");
+        auto const rejectLog = readFile(base / "reject.log");
+        require(
+            rejectLog.find("--export-alpha cannot be combined with --no-output") != std::string::npos,
+            "rejection reason for --export-alpha + --no-output is missing");
+        require(!std::filesystem::exists(rejectedCsv), "rejected run still created an alpha export");
+    }
+
+    // An out-of-range grid must be rejected as invalid configuration before any
+    // allocation, not surface as an opaque bad_alloc.
+    {
+        auto const overflowCommand = quote(HEAT_CLOSURE_EXAMPLE_BIN)
+                                     + " --backend host --material preset --grid 100000 --no-output > "
+                                     + quote(base / "grid_overflow.log") + " 2>&1";
+        require(runCommand(overflowCommand) != 0, "out-of-range grid was accepted");
+        auto const overflowLog = readFile(base / "grid_overflow.log");
+        require(overflowLog.find("bad_alloc") == std::string::npos, "out-of-range grid failed with bad_alloc");
+        require(overflowLog.find("grid") != std::string::npos, "out-of-range grid error does not mention the grid");
+    }
+
+    // Same-backend repeatability: two identical host runs must agree to the
+    // declared tolerance (bitwise for the serial host path, but a tolerance is
+    // declared so a future parallel host executor does not make the test brittle).
+    constexpr double repeatTolerance = 1e-12;
+    auto const repeatA = base / "repeat_a";
+    auto const repeatB = base / "repeat_b";
+    auto const repeatCommandA = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material preset --grid " + grid
+                                + " --tmax " + tmax + " --frames 2 --output " + quote(repeatA) + " > "
+                                + quote(base / "repeat_a.log") + " 2>&1";
+    auto const repeatCommandB = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material preset --grid " + grid
+                                + " --tmax " + tmax + " --frames 2 --output " + quote(repeatB) + " > "
+                                + quote(base / "repeat_b.log") + " 2>&1";
+    require(runCommand(repeatCommandA) == 0, "repeat run A failed");
+    require(runCommand(repeatCommandB) == 0, "repeat run B failed");
+    auto const finalFieldA = readFinalFrame(repeatA);
+    auto const finalFieldB = readFinalFrame(repeatB);
+    require(finalFieldA.size() == finalFieldB.size(), "repeat runs produced different field sizes");
+    double repeatMaxDelta = 0.0;
+    for(std::size_t i = 0; i < finalFieldA.size(); ++i)
+    {
+        require(
+            std::isfinite(finalFieldA[i]) && std::isfinite(finalFieldB[i]),
+            "repeat run produced a non-finite value");
+        repeatMaxDelta = std::max(repeatMaxDelta, std::abs(finalFieldA[i] - finalFieldB[i]));
+    }
+    require(repeatMaxDelta <= repeatTolerance, "identical host runs disagree beyond the declared tolerance");
+
+    // Backend parity: compare the host final field against a second compiled
+    // backend. If none is compiled/available, print the explicit skip reason.
+    {
+        bool parityChecked = false;
+        std::string allReasons;
+        double parityMaxDelta = 0.0, parityRelL2 = 0.0;
+        for(char const* candidate : {"hip", "cuda", "oneapi"})
+        {
+            auto const dir = base / (std::string("parity_") + candidate);
+            auto const log = base / (std::string("parity_") + candidate + ".log");
+            auto const command = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend " + candidate
+                                 + " --material preset --grid " + grid + " --tmax " + tmax + " --frames 2 --output "
+                                 + quote(dir) + " > " + quote(log) + " 2>&1";
+            if(runCommand(command) != 0)
+            {
+                allReasons += std::string(candidate) + ": " + readFile(log) + " | ";
+                continue;
+            }
+            auto const secondField = readFinalFrame(dir);
+            require(secondField.size() == finalFieldA.size(), "backend parity produced a different field size");
+            double squaredDelta = 0.0, squaredHost = 0.0;
+            for(std::size_t i = 0; i < finalFieldA.size(); ++i)
+            {
+                require(std::isfinite(secondField[i]), "second backend produced a non-finite value");
+                auto const delta = secondField[i] - finalFieldA[i];
+                squaredDelta += delta * delta;
+                squaredHost += finalFieldA[i] * finalFieldA[i];
+                parityMaxDelta = std::max(parityMaxDelta, std::abs(delta));
+            }
+            require(squaredHost > 0.0, "host parity field is identically zero");
+            parityRelL2 = std::sqrt(squaredDelta / squaredHost);
+            require(
+                std::isfinite(parityRelL2) && parityRelL2 <= 1e-6,
+                "second backend disagrees with host beyond tolerance");
+            require(parityMaxDelta <= 1e-6, "second backend Linf disagreement with host beyond tolerance");
+            std::cout << "backend_parity second=" << candidate << " relL2=" << parityRelL2
+                      << " max_abs=" << parityMaxDelta << " tolerance=1e-6\n";
+            parityChecked = true;
+            break;
+        }
+        if(!parityChecked)
+            std::cout << "backend_parity skipped: no second compiled/available backend; reasons: " << allReasons
+                      << '\n';
+    }
 
     std::filesystem::remove_all(base);
     std::cout << "device solver checks passed\n";

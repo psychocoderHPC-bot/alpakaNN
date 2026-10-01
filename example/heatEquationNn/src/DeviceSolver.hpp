@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -26,6 +27,23 @@ namespace heatclosure
 
     namespace device_detail
     {
+        /** Validate a square grid before any device allocation.
+         *
+         * The device buffers store a flattened `n*n` field in a `uint32_t` extent, so
+         * the element count must fit. Rejecting here, before allocating, keeps an
+         * absurd `--grid` from failing with `bad_alloc` instead of a clear config error.
+         */
+        inline void validateGrid(std::size_t n, char const* context)
+        {
+            if(n < 2)
+                throw std::invalid_argument(std::string(context) + ": grid must be at least 2");
+            if(n > std::numeric_limits<std::size_t>::max() / n)
+                throw std::invalid_argument(std::string(context) + ": grid element count overflows");
+            if(n * n > static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+                throw std::invalid_argument(
+                    std::string(context) + ": grid element count exceeds the device extent limit");
+        }
+
         /** Check the value-level queue/device association independently of allocation.
          * Kept generic so this precondition can be unit-tested without physical devices.
          */
@@ -199,18 +217,6 @@ namespace heatclosure
             , m_u(alpaka::onHost::alloc<double>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n)}))
             , m_next(alpaka::onHost::alloc<double>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n)}))
             , m_alpha(alpaka::onHost::alloc<double>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n)}))
-            , m_features(
-                  alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 3u}))
-            , m_logits(
-                  alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 1u}))
-            , m_gate(
-                  alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 64u}))
-            , m_up(alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 64u}))
-            , m_hidden(
-                  alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 64u}))
-            , m_wgate(alpaka::onHost::alloc<float>(device, alpaka::Vec{3u, 64u}))
-            , m_wup(alpaka::onHost::alloc<float>(device, alpaka::Vec{3u, 64u}))
-            , m_wdown(alpaka::onHost::alloc<float>(device, alpaka::Vec{64u, 1u}))
         {
             if(initial.size() != config.n * config.n)
                 throw std::invalid_argument("initial field size mismatch");
@@ -228,6 +234,10 @@ namespace heatclosure
                    || model->beta != config.beta || model->alphaMin != config.alphaMin
                    || model->alphaMax != config.alphaMax)
                     throw std::invalid_argument("neural mode requires matching model metadata");
+                // The O(n^2 * 64) gated-MLP hidden/feature workspaces dominate the
+                // memory footprint and are only needed for neural inference, so they
+                // are allocated lazily here instead of unconditionally.
+                allocateNeuralWorkspace(device);
                 allocateModel(queue, *model);
             }
         }
@@ -241,13 +251,22 @@ namespace heatclosure
                     alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
                     alpaka::KernelBundle{
                         device_detail::PackFeatures{dx, static_cast<uint32_t>(cfg.n)},
-                        m_features,
+                        *m_features,
                         m_u});
-                alpaka::nn::onHost::nn::mlp<
-                    float>(queue, exec, m_features, m_wgate, m_wup, m_wdown, m_gate, m_up, m_hidden, m_logits);
+                alpaka::nn::onHost::nn::mlp<float>(
+                    queue,
+                    exec,
+                    *m_features,
+                    *m_wgate,
+                    *m_wup,
+                    *m_wdown,
+                    *m_gate,
+                    *m_up,
+                    *m_hidden,
+                    *m_logits);
                 queue.enqueue(
                     alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
-                    alpaka::KernelBundle{device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, m_logits});
+                    alpaka::KernelBundle{device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, *m_logits});
             }
             else if(m_mode == CoefficientMode::preset)
                 queue.enqueue(
@@ -313,15 +332,26 @@ namespace heatclosure
         }
 
     private:
+        using FeatureBuffer
+            = decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{1u, 3u}));
+        using LogitBuffer
+            = decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{1u, 1u}));
+        using HiddenBuffer
+            = decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{1u, 64u}));
+
         TQueue* m_queue;
         CoefficientMode m_mode;
         Field m_u, m_next, m_alpha;
-        decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{1u, 3u})) m_features;
-        decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{1u, 1u})) m_logits;
-        decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{1u, 64u})) m_gate, m_up,
-            m_hidden;
-        decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{3u, 64u})) m_wgate, m_wup;
-        decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{64u, 1u})) m_wdown;
+        // Neural-only workspaces; empty (and therefore never touched) for uniform/preset.
+        std::optional<FeatureBuffer> m_features;
+        std::optional<LogitBuffer> m_logits;
+        std::optional<HiddenBuffer> m_gate, m_up, m_hidden;
+        using GateWeightBuffer
+            = decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{3u, 64u}));
+        using DownWeightBuffer
+            = decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{64u, 1u}));
+        std::optional<GateWeightBuffer> m_wgate, m_wup;
+        std::optional<DownWeightBuffer> m_wdown;
 
         static TQueue& checkedQueue(TQueue& queue, TDevice const& device)
         {
@@ -330,7 +360,8 @@ namespace heatclosure
 
         static std::size_t checkedSteps(Config const& c)
         {
-            if(c.n < 2 || c.n > std::numeric_limits<uint32_t>::max() / c.n || !(c.tmax > 0.0) || !std::isfinite(c.tmax)
+            device_detail::validateGrid(c.n, "DeviceSolver");
+            if(!(c.tmax > 0.0) || !std::isfinite(c.tmax)
                || !(c.alphaMax > c.alphaMin) || !(c.alphaMin > 0.0) || !std::isfinite(c.alphaMin)
                || !std::isfinite(c.alphaMax) || !std::isfinite(c.beta) || c.beta < 0.0 || !std::isfinite(c.leftWall)
                || !std::isfinite(c.rightWall))
@@ -363,13 +394,22 @@ namespace heatclosure
                     alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
                     alpaka::KernelBundle{
                         device_detail::PackFeatures{dx, static_cast<uint32_t>(cfg.n)},
-                        m_features,
+                        *m_features,
                         m_u});
-                alpaka::nn::onHost::nn::mlp<
-                    float>(queue, exec, m_features, m_wgate, m_wup, m_wdown, m_gate, m_up, m_hidden, m_logits);
+                alpaka::nn::onHost::nn::mlp<float>(
+                    queue,
+                    exec,
+                    *m_features,
+                    *m_wgate,
+                    *m_wup,
+                    *m_wdown,
+                    *m_gate,
+                    *m_up,
+                    *m_hidden,
+                    *m_logits);
                 queue.enqueue(
                     alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
-                    alpaka::KernelBundle{device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, m_logits});
+                    alpaka::KernelBundle{device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, *m_logits});
             }
             else if(m_mode == CoefficientMode::preset)
                 queue.enqueue(
@@ -384,6 +424,19 @@ namespace heatclosure
                     alpaka::KernelBundle{device_detail::UniformAlpha{}, m_alpha});
         }
 
+        void allocateNeuralWorkspace(TDevice const& device)
+        {
+            auto const batch = static_cast<uint32_t>(cfg.n * cfg.n);
+            m_wgate.emplace(alpaka::onHost::alloc<float>(device, alpaka::Vec{3u, 64u}));
+            m_wup.emplace(alpaka::onHost::alloc<float>(device, alpaka::Vec{3u, 64u}));
+            m_wdown.emplace(alpaka::onHost::alloc<float>(device, alpaka::Vec{64u, 1u}));
+            m_features.emplace(alpaka::onHost::alloc<float>(device, alpaka::Vec{batch, 3u}));
+            m_logits.emplace(alpaka::onHost::alloc<float>(device, alpaka::Vec{batch, 1u}));
+            m_gate.emplace(alpaka::onHost::alloc<float>(device, alpaka::Vec{batch, 64u}));
+            m_up.emplace(alpaka::onHost::alloc<float>(device, alpaka::Vec{batch, 64u}));
+            m_hidden.emplace(alpaka::onHost::alloc<float>(device, alpaka::Vec{batch, 64u}));
+        }
+
         void allocateModel(TQueue& queue, Model const& model)
         {
             auto gate = alpaka::onHost::allocHost<float>(alpaka::Vec{3u, 64u});
@@ -396,9 +449,9 @@ namespace heatclosure
             }
             for(std::size_t i = 0; i < 64; ++i)
                 down[alpaka::Vec{static_cast<uint32_t>(i), 0u}] = model.down[i];
-            alpaka::onHost::memcpy(queue, m_wgate, gate);
-            alpaka::onHost::memcpy(queue, m_wup, up);
-            alpaka::onHost::memcpy(queue, m_wdown, down);
+            alpaka::onHost::memcpy(queue, *m_wgate, gate);
+            alpaka::onHost::memcpy(queue, *m_wup, up);
+            alpaka::onHost::memcpy(queue, *m_wdown, down);
             alpaka::onHost::wait(queue); // weight staging buffers are local to construction
         }
     };

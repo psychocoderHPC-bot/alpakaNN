@@ -14,40 +14,68 @@ namespace
         return {(std::istreambuf_iterator<char>(f)), {}};
     }
 
+    std::vector<unsigned char> readBytes(std::filesystem::path const& p)
+    {
+        std::ifstream f(p, std::ios::binary);
+        if(!f)
+            throw std::runtime_error("cannot read " + p.string());
+        return {(std::istreambuf_iterator<char>(f)), {}};
+    }
+
     void write(std::filesystem::path const& p, std::string const& s)
     {
         std::ofstream f(p);
         f << s;
     }
 
-    void rejected(std::filesystem::path const& weights, std::string const& caseName)
+    /** Reject an invalid model and, when supplied, assert the failure-reason class. */
+    void rejected(
+        std::filesystem::path const& weights,
+        std::string const& caseName,
+        std::string const& expectedReason = {})
     {
         bool failed = false;
+        std::string reason;
         try
         {
             (void) heatclosure::loadModel(weights, 0.5);
         }
-        catch(std::exception const&)
+        catch(std::exception const& e)
         {
             failed = true;
+            reason = e.what();
         }
         if(!failed)
             throw std::runtime_error("invalid model accepted: " + caseName);
+        if(!expectedReason.empty() && reason.find(expectedReason) == std::string::npos)
+            throw std::runtime_error(
+                "wrong rejection reason for " + caseName + ": got '" + reason + "', expected fragment '"
+                + expectedReason + "'");
     }
 
-    void rejectedWithBeta(std::filesystem::path const& weights, double beta, std::string const& caseName)
+    void rejectedWithBeta(
+        std::filesystem::path const& weights,
+        double beta,
+        std::string const& caseName,
+        std::string const& expectedReason = {})
     {
         bool failed = false;
+        std::string reason;
         try
         {
             (void) heatclosure::loadModel(weights, beta);
         }
-        catch(std::exception const&)
+        catch(std::exception const& e)
         {
             failed = true;
+            reason = e.what();
         }
         if(!failed)
             throw std::runtime_error("invalid model accepted: " + caseName);
+        if(!expectedReason.empty() && reason.find(expectedReason) == std::string::npos)
+            throw std::runtime_error(
+                "wrong rejection reason for " + caseName + ": got '" + reason + "', expected fragment '"
+                + expectedReason + "'");
     }
 
     std::string compact(std::string const& src)
@@ -102,10 +130,18 @@ try
     auto weights = temp / "weights.bin", metadata = std::filesystem::path(weights.string() + ".metadata.json");
     std::filesystem::copy_file(source, weights);
     auto original = read(source.string() + ".metadata.json");
-    auto run = [&](std::string const& text, std::string const& label)
+    // Derive the declared checksum from the weights file actually under test rather
+    // than hardcoding a revision-specific digest. This keeps the mutation-rejection
+    // test meaningful across model updates while still requiring a wrong checksum
+    // to be rejected (the tamper case below flips a byte with matching metadata).
+    auto const actualSha = heatclosure::detail::sha256(readBytes(source));
+    auto const expectedChecksumLiteral = std::string("\"weights_sha256\": \"") + actualSha + "\"";
+    if(original.find(expectedChecksumLiteral) == std::string::npos)
+        throw std::runtime_error("metadata does not declare the actual weights sha256: " + actualSha);
+    auto run = [&](std::string const& text, std::string const& label, std::string const& expectedReason = {})
     {
         write(metadata, text);
-        rejected(weights, label);
+        rejected(weights, label, expectedReason);
     };
     write(metadata, compact(original));
     (void) heatclosure::loadModel(weights, 0.5); // legal whitespace variation
@@ -160,23 +196,45 @@ try
     auto const* oldLocale = std::setlocale(LC_NUMERIC, nullptr);
     auto savedLocale = oldLocale ? std::string(oldLocale) : std::string("C");
     // Exercise under a comma-decimal locale when installed; parsing must remain JSON-locale invariant.
+    char const* commaLocale = nullptr;
     for(auto candidate : {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "fr_FR.utf8"})
         if(std::setlocale(LC_NUMERIC, candidate))
+        {
+            commaLocale = candidate;
             break;
+        }
+    if(commaLocale == nullptr)
+    {
+        // The container may only ship the C locale. This is recorded explicitly and
+        // the parser is still exercised for locale invariance under C, rather than
+        // silently passing without checking anything.
+        std::cout << "locale test: no comma-decimal locale installed; verified locale invariance under C only\n";
+        std::setlocale(LC_NUMERIC, savedLocale.c_str());
+    }
+    auto const decimalLocale = commaLocale != nullptr ? std::string(commaLocale) : savedLocale;
+    if(!std::setlocale(LC_NUMERIC, decimalLocale.c_str()))
+        throw std::runtime_error("failed to select a decimal locale for the locale-invariance check");
     auto localeNumber = heatclosure::detail::Parser(R"({"n":1.5})").parse();
     if(heatclosure::detail::get(localeNumber, "n").number() != 1.5)
         throw std::runtime_error("JSON decimal parsing depends on locale");
     (void) std::setlocale(LC_NUMERIC, savedLocale.c_str());
-    auto mutation = [&](std::string const& before, std::string const& after, std::string const& label)
+    auto mutation = [&](std::string const& before,
+                        std::string const& after,
+                        std::string const& label,
+                        std::string const& expectedReason = {})
     {
         auto altered = original;
         auto pos = altered.find(before);
         if(pos == std::string::npos)
             throw std::runtime_error("test mutation target missing: " + label);
         altered.replace(pos, before.size(), after);
-        run(altered, label);
+        run(altered, label, expectedReason);
     };
-    mutation("\"format\": \"alpakaNN-heat-closure-f32-v1\"", "\"format\": \"other\"", "format");
+    mutation(
+        "\"format\": \"alpakaNN-heat-closure-f32-v1\"",
+        "\"format\": \"other\"",
+        "format",
+        "unsupported model metadata: format");
     mutation("\"architecture\": \"gated_silu_bias_free_v1\"", "\"architecture\": \"other\"", "architecture");
     mutation("\"dtype\": \"float32\"", "\"dtype\": \"float64\"", "dtype");
     mutation(
@@ -221,11 +279,16 @@ try
     mutation("\"alpha_max\": 6.0", "\"alpha_max\": 0.0", "alpha maximum");
     mutation("\"alpha_max\": 6.0", "\"alpha_max\": 5.0", "alpha bounds clip true coefficient range");
     mutation("\"width\": 64", "\"width\": 32", "width");
-    mutation("\"weights_file\": \"weights.bin\"", "\"weights_file\": \"different.bin\"", "declared weights name");
     mutation(
-        "\"weights_sha256\": \"f075cffd50324e17434713d5f9479fb02375eefc712565e2dbfcfd54ac82bf01\"",
+        "\"weights_file\": \"weights.bin\"",
+        "\"weights_file\": \"different.bin\"",
+        "declared weights name",
+        "unsupported model metadata: weights_file");
+    mutation(
+        expectedChecksumLiteral,
         "\"weights_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"",
-        "checksum metadata");
+        "checksum metadata",
+        "checksum mismatch");
     run(original.substr(0, original.size() / 2), "truncated JSON");
     auto bytes = read(weights);
     bytes[0] ^= 1;
