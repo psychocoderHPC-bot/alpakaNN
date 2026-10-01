@@ -7,7 +7,6 @@
 
 #include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onAcc/internal/nn/softmax.hpp>
-#include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <cstdint>
 #include <stdexcept>
@@ -30,7 +29,7 @@ namespace alpaka::nn::onHost::nn
         if(input.getExtents() != output.getExtents())
             throw std::invalid_argument{"softmax shape mismatch."};
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(
+            alpaka::onHost::getFrameSpec(
                 queue.getDevice(),
                 exec,
                 detail::softmaxLaunchExtents(output.getExtents(), axis)),
@@ -46,7 +45,7 @@ namespace alpaka::nn::onHost::nn
         if(input.getExtents() != output.getExtents() || input.getExtents() != mask.getExtents())
             throw std::invalid_argument{"maskedSoftmax shape mismatch."};
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(
+            alpaka::onHost::getFrameSpec(
                 queue.getDevice(),
                 exec,
                 detail::softmaxLaunchExtents(output.getExtents(), axis)),
@@ -70,7 +69,7 @@ namespace alpaka::nn::onHost::nn
         if(input.getExtents() != output.getExtents())
             throw std::invalid_argument{"softmax shape mismatch."};
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(
+            alpaka::onHost::getFrameSpec(
                 queue.getDevice(),
                 exec,
                 detail::softmaxLaunchExtents(output.getExtents(), axis)),

@@ -5,15 +5,11 @@
 
 #pragma once
 
-#include "alpaka/nn/core/shape.hpp"
-
 #include <alpaka/alpaka.hpp>
-#include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <concepts>
-#include <cstdint>
-#include <numbers>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 
 namespace alpaka::nn::onHost::ops
@@ -254,7 +250,7 @@ namespace alpaka::nn::onHost::ops
 
         inline void enqueue(auto& queue, auto exec, alpaka::concepts::Vector auto const& extents, auto const& bundle)
         {
-            queue.enqueue(alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, extents), bundle);
+            queue.enqueue(alpaka::onHost::getFrameSpec(queue.getDevice(), exec, extents), bundle);
         }
     } // namespace detail
 

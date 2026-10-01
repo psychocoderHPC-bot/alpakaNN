@@ -7,21 +7,24 @@
 
 #include <alpaka/nn/nn.hpp>
 
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
 #include <vector>
 
-TEST_CASE("shape utilities detect contiguous and strided layouts", "[core][shape][view]")
+using TestValueTypes = alpaka::nn::test::TestValueTypes;
+
+TEMPLATE_LIST_TEST_CASE("shape utilities detect contiguous and strided layouts", "[core][shape][view]", TestValueTypes)
 {
-    std::vector<float> data(32u, 0.0f);
+    std::vector<TestType> data(32u, TestType{});
     auto contiguous = alpaka::makeView(alpaka::api::host, data.data(), alpaka::Vec{2u, 4u});
 
     REQUIRE(alpaka::nn::shape::isContiguous(contiguous));
     REQUIRE(alpaka::nn::shape::isAxisContiguous(contiguous, 1u));
     REQUIRE_FALSE(alpaka::nn::shape::isAxisContiguous(contiguous, 0u));
 
-    auto padded = alpaka::nn::onHost::view::makePaddedView<float>(
+    auto padded = alpaka::nn::onHost::view::makePaddedView<TestType>(
         data.data(),
         std::array<std::size_t, 2u>{2u, 4u},
         std::array<std::size_t, 2u>{6u, 1u});

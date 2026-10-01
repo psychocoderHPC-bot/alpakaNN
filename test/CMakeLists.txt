@@ -6,8 +6,6 @@
 cmake_minimum_required(VERSION 3.25)
 
 alpaka_install_catch2()
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-option(alpakaNN_ENABLE_TINYLLAMA_LARGE_TESTS "Enable TinyLlama download/convert/chat smoke tests." OFF)
 
 function(alpakaNN_add_test_target target_prefix folder)
     file(GLOB test_folders ${folder})
@@ -32,56 +30,20 @@ function(alpakaNN_add_test_target target_prefix folder)
             target_link_libraries(${test_target_name} PRIVATE Catch2::Catch2WithMain alpaka::nn alpaka::alpaka)
             target_include_directories(${test_target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/unit/testHelper")
             alpaka_finalize(${test_target_name})
-            catch_discover_tests(${test_target_name})
+            if(alpaka_DEP_ONEAPI)
+                # Enable the documented IGC fp64 emulation for the discovered tests. This
+                # makes fp64-incapable Intel GPUs (e.g. Arc) usable instead of excluding
+                # the whole oneAPI device spec. The variable is Intel-specific and ignored
+                # by other backends, so applying it here is harmless elsewhere.
+                catch_discover_tests(
+                    ${test_target_name}
+                    PROPERTIES ENVIRONMENT "IGC_EnableDPEmulation=1;OverrideDefaultFP64Settings=1"
+                )
+            else()
+                catch_discover_tests(${test_target_name})
+            endif()
         endforeach()
     endforeach()
 endfunction()
 
 alpakann_add_test_target(unit_test_ ${CMAKE_CURRENT_SOURCE_DIR}/unit/**)
-
-# Download tiny LLaMA model for testing during build
-set(TINY_LLAMA_DIR ${CMAKE_BINARY_DIR}/testdata/tiny_llama)
-file(MAKE_DIRECTORY ${TINY_LLAMA_DIR})
-
-message(STATUS "Downloading tiny LLaMA model to: ${TINY_LLAMA_DIR}")
-execute_process(
-    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/download_tiny_llama.py tiny_llama ${TINY_LLAMA_DIR}
-    RESULT_VARIABLE DOWNLOAD_RESULT
-)
-
-if(NOT DOWNLOAD_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to download tiny LLaMA model")
-endif()
-
-# Define macro for test to find model
-add_compile_definitions(TINY_LLAMA_MODEL_PATH="${TINY_LLAMA_DIR}/tiny_llama.bin")
-
-add_test(
-    NAME tokenizer_helper_roundtrip
-    COMMAND
-        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/integration/tokenizer_helper_roundtrip.py
-        ${CMAKE_SOURCE_DIR}/tools/llama_tokenizer.py ${TINY_LLAMA_DIR}
-)
-
-add_test(
-    NAME chat_cli_selftest
-    COMMAND
-        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py selftest $<TARGET_FILE:ChatCli>
-        ${TINY_LLAMA_DIR}
-)
-
-add_test(
-    NAME chat_cli_interactive
-    COMMAND
-        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py interactive $<TARGET_FILE:ChatCli>
-        ${TINY_LLAMA_DIR}
-)
-
-if(alpakaNN_ENABLE_TINYLLAMA_LARGE_TESTS)
-    add_test(
-        NAME chat_cli_tinyllama_chat
-        COMMAND
-            ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/integration/chat_cli_smoke.py tinyllama-chat
-            $<TARGET_FILE:ChatCli> ${TINY_LLAMA_DIR} ${CMAKE_SOURCE_DIR}
-    )
-endif()

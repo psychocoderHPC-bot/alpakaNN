@@ -20,7 +20,10 @@ namespace alpaka::nn::onAcc::internal::nn
 
         ALPAKA_FN_ACC void operator()(auto const& acc, auto scores, auto q, auto k) const
         {
-            for(auto idx : alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{scores.getExtents()}))
+            for(auto idx : alpaka::onAcc::makeIdxMap(
+                    acc,
+                    alpaka::onAcc::worker::threadsInGrid,
+                    alpaka::IdxRange{scores.getExtents()}))
             {
                 auto const queryHead = static_cast<uint32_t>(idx[1]);
                 auto const kvHead = queryHead / queriesPerKvGroup;

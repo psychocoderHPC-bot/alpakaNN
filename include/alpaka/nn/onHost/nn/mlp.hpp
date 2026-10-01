@@ -12,9 +12,9 @@
 namespace alpaka::nn::onHost::nn
 {
     template<typename T_Type>
-    void linear(auto& queue, auto exec, auto const& input, auto const& weight, auto& output)
+    void linear(auto& queue, auto const& input, auto const& weight, auto& output)
     {
-        alpaka::nn::onHost::gemm<T_Type>(queue, exec, input, weight, output);
+        alpaka::nn::onHost::gemm<T_Type>(queue, input, weight, output);
     }
 
     template<typename T_Type>
@@ -35,13 +35,13 @@ namespace alpaka::nn::onHost::nn
             alpaka::Vec{input.getExtents()[0], Wup.getExtents()[1]});
         auto hidden = alpaka::onHost::alloc<T_Type>(queue.getDevice(), gate.getExtents());
 
-        linear<T_Type>(queue, exec, input, Wgate, gate);
+        linear<T_Type>(queue, input, Wgate, gate);
         alpaka::onHost::wait(queue);
-        linear<T_Type>(queue, exec, input, Wup, up);
+        linear<T_Type>(queue, input, Wup, up);
         alpaka::onHost::wait(queue);
         alpaka::nn::onHost::ops::swiglu<T_Type>(queue, exec, gate, up, hidden);
         alpaka::onHost::wait(queue);
-        linear<T_Type>(queue, exec, hidden, Wdown, output);
+        linear<T_Type>(queue, hidden, Wdown, output);
         alpaka::onHost::wait(queue);
     }
 } // namespace alpaka::nn::onHost::nn

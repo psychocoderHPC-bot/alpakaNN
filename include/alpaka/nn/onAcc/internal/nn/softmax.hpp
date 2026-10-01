@@ -36,10 +36,8 @@ namespace alpaka::nn::onAcc::internal::nn
             auto iterExtents = extents;
             iterExtents[axis] = 1u;
 
-            for(auto iterIdx : alpaka::onAcc::makeIdxMap(
-                    acc,
-                    alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{iterExtents}))
+            for(auto iterIdx :
+                alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{iterExtents}))
             {
                 auto probe = iterIdx;
 
@@ -88,10 +86,8 @@ namespace alpaka::nn::onAcc::internal::nn
             auto iterExtents = extents;
             iterExtents[axis] = 1u;
 
-            for(auto iterIdx : alpaka::onAcc::makeIdxMap(
-                    acc,
-                    alpaka::onAcc::worker::threadsInGrid,
-                    alpaka::IdxRange{iterExtents}))
+            for(auto iterIdx :
+                alpaka::onAcc::makeIdxMap(acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{iterExtents}))
             {
                 auto probe = iterIdx;
                 T_Type maxValue = std::numeric_limits<T_Type>::lowest();

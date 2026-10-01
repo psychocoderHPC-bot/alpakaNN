@@ -3,32 +3,24 @@
  * SPDX-License-Identifier: ISC
  */
 
+#include "test.hpp"
+
 #include <alpaka/alpaka.hpp>
 #include <alpaka/nn/nn.hpp>
 
-#include <catch2/catch_approx.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include <cstdint>
-#include <tuple>
-#include <type_traits>
+#include <array>
 
 using namespace alpaka;
 
-using TestApis = std::decay_t<decltype(onHost::allBackends(onHost::enabledDeviceSpecs, exec::enabledExecutors))>;
+using TestApis = alpaka::nn::test::TestApis;
 
+// Dense vendor-backed GEMM numerical case for float/double operands only. The result must match a host
+// scalar reference.
 template<typename T_Type>
-void checkValue(T_Type actual, T_Type expected)
-{
-    if constexpr(std::floating_point<T_Type>)
-        CHECK(actual == Catch::Approx(expected).epsilon(1.0e-5).margin(1.0e-6));
-    else
-        CHECK(actual == expected);
-}
-
-template<typename T_Type>
-void runMatmulCase(auto& queue, auto const& device, auto exec, uint32_t m, uint32_t k, uint32_t n)
+void runMatmulCase(auto& queue, auto const& device, uint32_t m, uint32_t k, uint32_t n)
 {
     auto const aExtent = Vec{m, k};
     auto const bExtent = Vec{k, n};
@@ -75,20 +67,20 @@ void runMatmulCase(auto& queue, auto const& device, auto exec, uint32_t m, uint3
     onHost::memcpy(queue, devB, hostB);
     onHost::memcpy(queue, devC, hostC);
 
-    alpaka::nn::onHost::matrixMultiply<T_Type>(queue, exec, devA, devB, devC);
+    alpaka::nn::onHost::gemm<T_Type>(queue, devA, devB, devC);
 
     onHost::memcpy(queue, hostC, devC);
     onHost::wait(queue);
 
     INFO("type=" << onHost::demangledName<T_Type>() << " extents=" << cExtent << " inner=" << k);
     for(auto idx : IdxRange{cExtent})
-        checkValue(hostC[idx], expectedC[idx]);
+        alpaka::nn::test::checkValue(hostC[idx], expectedC[idx]);
 }
 
-TEMPLATE_LIST_TEST_CASE("matrix multiply tiled kernel", "[matrix][matmul]", TestApis)
+TEMPLATE_LIST_TEST_CASE("dense vendor-backed matrix multiply", "[matrix][matmul]", TestApis)
 {
     auto cfg = TestType::makeDict();
-    auto deviceSpec = cfg[object::deviceSpec];
+    auto deviceSpec = onHost::makeDeviceSpec(cfg);
     auto exec = cfg[object::exec];
 
     auto selector = onHost::makeDeviceSelector(deviceSpec);
@@ -105,22 +97,20 @@ TEMPLATE_LIST_TEST_CASE("matrix multiply tiled kernel", "[matrix][matmul]", Test
 
     auto queue = device.makeQueue();
 
-    auto const cases = std::make_tuple(
-        std::tuple{1u, 1u, 1u},
-        std::tuple{2u, 3u, 4u},
-        std::tuple{5u, 7u, 3u},
-        std::tuple{16u, 16u, 16u},
-        std::tuple{17u, 8u, 33u},
-        std::tuple{31u, 19u, 7u},
-        std::tuple{9u, 37u, 23u});
+    auto const cases = std::array{
+        std::array{1u, 1u, 1u},
+        std::array{2u, 3u, 4u},
+        std::array{5u, 7u, 3u},
+        std::array{16u, 16u, 16u},
+        std::array{17u, 8u, 33u},
+        std::array{31u, 19u, 7u},
+        std::array{9u, 37u, 23u}};
 
-    std::apply(
-        [&](auto... dims)
-        {
-            ((runMatmulCase<int32_t>(queue, device, exec, std::get<0>(dims), std::get<1>(dims), std::get<2>(dims)),
-              runMatmulCase<float>(queue, device, exec, std::get<0>(dims), std::get<1>(dims), std::get<2>(dims)),
-              runMatmulCase<double>(queue, device, exec, std::get<0>(dims), std::get<1>(dims), std::get<2>(dims))),
-             ...);
-        },
-        cases);
+    for(auto const& dims : cases)
+    {
+        runMatmulCase<float>(queue, device, dims[0], dims[1], dims[2]);
+        // Guarded double instantiation: fp64-less oneAPI GPU devices must not build a double SYCL kernel.
+        if constexpr(alpaka::nn::test::supportsFp64(device))
+            runMatmulCase<double>(queue, device, dims[0], dims[1], dims[2]);
+    }
 }

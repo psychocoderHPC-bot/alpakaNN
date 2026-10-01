@@ -5,15 +5,12 @@
 
 #pragma once
 
-#include "alpaka/nn/core/shape.hpp"
-
 #include <alpaka/alpaka.hpp>
-#include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
-#include <type_traits>
+#include <string>
 
 namespace alpaka::nn::onHost::ops
 {
@@ -52,24 +49,6 @@ namespace alpaka::nn::onHost::ops
             ALPAKA_FN_ACC constexpr T_Type operator()(T_Type lhs, T_Type rhs) const
             {
                 return lhs > rhs ? lhs : rhs;
-            }
-        };
-
-        template<typename T_Type>
-        struct MeanFinalize
-        {
-            ALPAKA_FN_ACC constexpr T_Type operator()(T_Type value, uint32_t count) const
-            {
-                return value / static_cast<T_Type>(count);
-            }
-        };
-
-        template<typename T_Type>
-        struct IdentityFinalize
-        {
-            ALPAKA_FN_ACC constexpr T_Type operator()(T_Type value, uint32_t) const
-            {
-                return value;
             }
         };
 
@@ -191,7 +170,7 @@ namespace alpaka::nn::onHost::ops
         void enqueueReduction(auto& queue, auto exec, auto const& extents, T_Kernel kernel, T_Args&&... args)
         {
             queue.enqueue(
-                alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, extents),
+                alpaka::onHost::getFrameSpec(queue.getDevice(), exec, extents),
                 alpaka::KernelBundle{kernel, ALPAKA_FORWARD(args)...});
         }
     } // namespace detail

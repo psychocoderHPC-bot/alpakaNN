@@ -7,7 +7,6 @@
 
 #include <alpaka/alpaka.hpp>
 #include <alpaka/nn/onAcc/internal/nn/embedding.hpp>
-#include <alpaka/nn/onHost/internal/launch.hpp>
 
 #include <cstdint>
 #include <stdexcept>
@@ -28,7 +27,7 @@ namespace alpaka::nn::onHost::nn
             throw std::invalid_argument{"embeddingLookup shape mismatch."};
 
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, outputExtents),
+            alpaka::onHost::getFrameSpec(queue.getDevice(), exec, outputExtents),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::EmbeddingLookupKernel<T_Type>{},
                 output,

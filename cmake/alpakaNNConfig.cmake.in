@@ -2,9 +2,13 @@
 
 include(CMakeFindDependencyMacro)
 find_dependency(alpaka REQUIRED CONFIG)
+find_dependency(alpakaVendor REQUIRED CONFIG)
 
 include("${CMAKE_CURRENT_LIST_DIR}/alpakaNNTargets.cmake")
 
 if(TARGET alpaka::nn)
     set_property(TARGET alpaka::nn APPEND PROPERTY INTERFACE_LINK_LIBRARIES alpaka::alpaka)
+    if(TARGET alpakaVendor::alpakaVendor)
+        set_property(TARGET alpaka::nn APPEND PROPERTY INTERFACE_LINK_LIBRARIES alpakaVendor::alpakaVendor)
+    endif()
 endif()

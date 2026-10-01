@@ -83,10 +83,92 @@ namespace
     }
 } // namespace
 
+namespace
+{
+    template<typename T_Type>
+    void runSoftmaxStabilityCase(auto& queue, auto exec, auto const& device)
+    {
+        auto input = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{1u, 1u, 2u, 3u});
+        auto output = alpaka::onHost::allocHost<T_Type>(input.getExtents());
+        input[alpaka::Vec{0u, 0u, 0u, 0u}] = static_cast<T_Type>(1000);
+        input[alpaka::Vec{0u, 0u, 0u, 1u}] = static_cast<T_Type>(1001);
+        input[alpaka::Vec{0u, 0u, 0u, 2u}] = static_cast<T_Type>(999);
+        input[alpaka::Vec{0u, 0u, 1u, 0u}] = static_cast<T_Type>(-1);
+        input[alpaka::Vec{0u, 0u, 1u, 1u}] = T_Type{};
+        input[alpaka::Vec{0u, 0u, 1u, 2u}] = T_Type{1};
+
+        auto devIn = alpaka::onHost::allocLike(device, input);
+        auto devOut = alpaka::onHost::allocLike(device, output);
+        alpaka::onHost::memcpy(queue, devIn, input);
+        alpaka::nn::onHost::nn::causalSoftmax<T_Type>(queue, exec, devIn, devOut, 3u, 2u, 3u);
+        alpaka::onHost::memcpy(queue, output, devOut);
+        alpaka::onHost::wait(queue);
+
+        CHECK(output[alpaka::Vec{0u, 0u, 0u, 1u}] == T_Type{});
+        CHECK(output[alpaka::Vec{0u, 0u, 0u, 2u}] == T_Type{});
+        auto sum0 = output[alpaka::Vec{0u, 0u, 0u, 0u}];
+        auto sum1 = output[alpaka::Vec{0u, 0u, 1u, 0u}] + output[alpaka::Vec{0u, 0u, 1u, 1u}]
+                    + output[alpaka::Vec{0u, 0u, 1u, 2u}];
+        alpaka::nn::test::checkValue(sum0, T_Type{1});
+        alpaka::nn::test::checkValue(sum1, T_Type{1});
+    }
+
+    template<typename T_Type>
+    void runCausalSoftmaxPrefillCase(auto& queue, auto exec, auto const& device)
+    {
+        auto input = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{1u, 4u, 4u, 4u});
+        auto output = alpaka::onHost::allocHost<T_Type>(input.getExtents());
+        for(auto idx : alpaka::IdxRange{input.getExtents()})
+            input[idx] = static_cast<T_Type>(idx[0] * 97u + idx[1] * 23u + idx[2] * 11u + idx[3] * 5u)
+                         * static_cast<T_Type>(0.03125);
+        for(auto idx : alpaka::IdxRange{output.getExtents()})
+            output[idx] = static_cast<T_Type>(-123);
+
+        auto expected = referenceCausalSoftmax<T_Type>(input);
+        auto devIn = alpaka::onHost::allocLike(device, input);
+        auto devOut = alpaka::onHost::allocLike(device, output);
+        alpaka::onHost::memcpy(queue, devIn, input);
+        alpaka::onHost::memcpy(queue, devOut, output);
+
+        alpaka::nn::onHost::nn::causalSoftmax<T_Type>(queue, exec, devIn, devOut, 3u, 2u, 3u);
+        alpaka::onHost::memcpy(queue, output, devOut);
+        alpaka::onHost::wait(queue);
+
+        for(auto idx : alpaka::IdxRange{output.getExtents()})
+            alpaka::nn::test::checkValue(output[idx], expected[idx], 1.0e-5f, 1.0e-5f);
+    }
+
+    template<typename T_Type>
+    void runSoftmaxDecodeCase(auto& queue, auto exec, auto const& device)
+    {
+        auto input = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{1u, 4u, 1u, 6u});
+        auto output = alpaka::onHost::allocHost<T_Type>(input.getExtents());
+        for(auto idx : alpaka::IdxRange{input.getExtents()})
+            input[idx] = static_cast<T_Type>(idx[0] * 97u + idx[1] * 29u + idx[2] * 13u + idx[3] * 3u)
+                             * static_cast<T_Type>(0.0625)
+                         - static_cast<T_Type>(0.5);
+        for(auto idx : alpaka::IdxRange{output.getExtents()})
+            output[idx] = static_cast<T_Type>(-321);
+
+        auto expected = referenceSoftmax<T_Type>(input);
+        auto devIn = alpaka::onHost::allocLike(device, input);
+        auto devOut = alpaka::onHost::allocLike(device, output);
+        alpaka::onHost::memcpy(queue, devIn, input);
+        alpaka::onHost::memcpy(queue, devOut, output);
+
+        alpaka::nn::onHost::nn::softmax<T_Type>(queue, exec, devIn, devOut, 3u);
+        alpaka::onHost::memcpy(queue, output, devOut);
+        alpaka::onHost::wait(queue);
+
+        for(auto idx : alpaka::IdxRange{output.getExtents()})
+            alpaka::nn::test::checkValue(output[idx], expected[idx], 1.0e-5f, 1.0e-5f);
+    }
+} // namespace
+
 TEMPLATE_LIST_TEST_CASE("softmax and causalSoftmax are stable", "[nn][softmax]", TestApis)
 {
     auto cfg = TestType::makeDict();
-    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    auto selector = alpaka::onHost::makeDeviceSelector(alpaka::onHost::makeDeviceSpec(cfg));
     if(!selector.isAvailable())
     {
         SUCCEED("No device available");
@@ -96,35 +178,15 @@ TEMPLATE_LIST_TEST_CASE("softmax and causalSoftmax are stable", "[nn][softmax]",
     auto exec = cfg[alpaka::object::exec];
     auto queue = device.makeQueue();
 
-    auto input = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 1u, 2u, 3u});
-    auto output = alpaka::onHost::allocHost<float>(input.getExtents());
-    input[alpaka::Vec{0u, 0u, 0u, 0u}] = 1000.0f;
-    input[alpaka::Vec{0u, 0u, 0u, 1u}] = 1001.0f;
-    input[alpaka::Vec{0u, 0u, 0u, 2u}] = 999.0f;
-    input[alpaka::Vec{0u, 0u, 1u, 0u}] = -1.0f;
-    input[alpaka::Vec{0u, 0u, 1u, 1u}] = 0.0f;
-    input[alpaka::Vec{0u, 0u, 1u, 2u}] = 1.0f;
-
-    auto devIn = alpaka::onHost::allocLike(device, input);
-    auto devOut = alpaka::onHost::allocLike(device, output);
-    alpaka::onHost::memcpy(queue, devIn, input);
-    alpaka::nn::onHost::nn::causalSoftmax<float>(queue, exec, devIn, devOut, 3u, 2u, 3u);
-    alpaka::onHost::memcpy(queue, output, devOut);
-    alpaka::onHost::wait(queue);
-
-    CHECK(output[alpaka::Vec{0u, 0u, 0u, 1u}] == 0.0f);
-    CHECK(output[alpaka::Vec{0u, 0u, 0u, 2u}] == 0.0f);
-    auto sum0 = output[alpaka::Vec{0u, 0u, 0u, 0u}];
-    auto sum1 = output[alpaka::Vec{0u, 0u, 1u, 0u}] + output[alpaka::Vec{0u, 0u, 1u, 1u}]
-                + output[alpaka::Vec{0u, 0u, 1u, 2u}];
-    alpaka::nn::test::checkValue(sum0, 1.0f);
-    alpaka::nn::test::checkValue(sum1, 1.0f);
+    runSoftmaxStabilityCase<float>(queue, exec, device);
+    if constexpr(alpaka::nn::test::supportsFp64(device))
+        runSoftmaxStabilityCase<double>(queue, exec, device);
 }
 
 TEMPLATE_LIST_TEST_CASE("causalSoftmax matches decoder prefill reference shape", "[nn][softmax][decoder]", TestApis)
 {
     auto cfg = TestType::makeDict();
-    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    auto selector = alpaka::onHost::makeDeviceSelector(alpaka::onHost::makeDeviceSpec(cfg));
     if(!selector.isAvailable())
     {
         SUCCEED("No device available");
@@ -134,31 +196,15 @@ TEMPLATE_LIST_TEST_CASE("causalSoftmax matches decoder prefill reference shape",
     auto exec = cfg[alpaka::object::exec];
     auto queue = device.makeQueue();
 
-    auto input = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 4u, 4u});
-    auto output = alpaka::onHost::allocHost<float>(input.getExtents());
-    for(auto idx : alpaka::IdxRange{input.getExtents()})
-        input[idx] = static_cast<float>(idx[0] * 97u + idx[1] * 23u + idx[2] * 11u + idx[3] * 5u) * 0.03125f;
-    for(auto idx : alpaka::IdxRange{output.getExtents()})
-        output[idx] = -123.0f;
-
-    auto expected = referenceCausalSoftmax<float>(input);
-    auto devIn = alpaka::onHost::allocLike(device, input);
-    auto devOut = alpaka::onHost::allocLike(device, output);
-    alpaka::onHost::memcpy(queue, devIn, input);
-    alpaka::onHost::memcpy(queue, devOut, output);
-
-    alpaka::nn::onHost::nn::causalSoftmax<float>(queue, exec, devIn, devOut, 3u, 2u, 3u);
-    alpaka::onHost::memcpy(queue, output, devOut);
-    alpaka::onHost::wait(queue);
-
-    for(auto idx : alpaka::IdxRange{output.getExtents()})
-        alpaka::nn::test::checkValue(output[idx], expected[idx], 1.0e-5f, 1.0e-5f);
+    runCausalSoftmaxPrefillCase<float>(queue, exec, device);
+    if constexpr(alpaka::nn::test::supportsFp64(device))
+        runCausalSoftmaxPrefillCase<double>(queue, exec, device);
 }
 
 TEMPLATE_LIST_TEST_CASE("softmax matches decoder decode reference shape", "[nn][softmax][decoder]", TestApis)
 {
     auto cfg = TestType::makeDict();
-    auto selector = alpaka::onHost::makeDeviceSelector(cfg[alpaka::object::deviceSpec]);
+    auto selector = alpaka::onHost::makeDeviceSelector(alpaka::onHost::makeDeviceSpec(cfg));
     if(!selector.isAvailable())
     {
         SUCCEED("No device available");
@@ -168,23 +214,7 @@ TEMPLATE_LIST_TEST_CASE("softmax matches decoder decode reference shape", "[nn][
     auto exec = cfg[alpaka::object::exec];
     auto queue = device.makeQueue();
 
-    auto input = alpaka::onHost::allocHost<float>(alpaka::Vec{1u, 4u, 1u, 6u});
-    auto output = alpaka::onHost::allocHost<float>(input.getExtents());
-    for(auto idx : alpaka::IdxRange{input.getExtents()})
-        input[idx] = static_cast<float>(idx[0] * 97u + idx[1] * 29u + idx[2] * 13u + idx[3] * 3u) * 0.0625f - 0.5f;
-    for(auto idx : alpaka::IdxRange{output.getExtents()})
-        output[idx] = -321.0f;
-
-    auto expected = referenceSoftmax<float>(input);
-    auto devIn = alpaka::onHost::allocLike(device, input);
-    auto devOut = alpaka::onHost::allocLike(device, output);
-    alpaka::onHost::memcpy(queue, devIn, input);
-    alpaka::onHost::memcpy(queue, devOut, output);
-
-    alpaka::nn::onHost::nn::softmax<float>(queue, exec, devIn, devOut, 3u);
-    alpaka::onHost::memcpy(queue, output, devOut);
-    alpaka::onHost::wait(queue);
-
-    for(auto idx : alpaka::IdxRange{output.getExtents()})
-        alpaka::nn::test::checkValue(output[idx], expected[idx], 1.0e-5f, 1.0e-5f);
+    runSoftmaxDecodeCase<float>(queue, exec, device);
+    if constexpr(alpaka::nn::test::supportsFp64(device))
+        runSoftmaxDecodeCase<double>(queue, exec, device);
 }

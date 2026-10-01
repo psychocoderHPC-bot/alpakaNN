@@ -1,3 +1,0 @@
-[submodule "extern/alpaka3"]
-	path = extern/alpaka3
-	url = https://github.com/alpaka-group/alpaka3.git

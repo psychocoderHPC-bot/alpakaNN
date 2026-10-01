@@ -18,7 +18,6 @@ include(CMakePackageConfigHelpers)
 include(FetchContent)
 
 option(alpakaNN_BUILD_TESTS "Build alpakaNN unit tests." ${PROJECT_IS_TOP_LEVEL})
-option(alpakaNN_OPENBLAS "Enable OpenBLAS host dispatch for GEMM/GEMV." ON)
 set(alpaka_COMPILE_PEDANTIC ON CACHE BOOL "Compile all code with strict compiler settings." FORCE)
 
 if(alpaka_DEP_HIP)
@@ -44,54 +43,39 @@ set(alpaka_BENCHMARKS OFF CACHE BOOL "Disable alpaka3 benchmarks." FORCE)
 set(alpaka_EXAMPLES OFF CACHE BOOL "Disable alpaka3 examples." FORCE)
 set(alpaka_HEADERCHECKS OFF CACHE BOOL "Disable alpaka3 header checks." FORCE)
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/alpaka3/CMakeLists.txt")
-    message(FATAL_ERROR "alpaka3 is missing. Initialize submodules first: git submodule update --init --recursive")
-endif()
+# The vendor bundles alpaka3 (via its own extern submodule or FetchContent) and exposes the
+# alpaka::blas / alpaka::fft abstractions used by alpakaNN's host GEMM/GEMV. The matching vendor BLAS
+# backend is mandatory for every enabled alpaka backend (enforced in alpakaNNVendorBackends.cmake).
+#   alpakaVendor dev = 03a92cc77e2b0b74e658851337cc6256162edcff
+#   bundled alpaka3   = e91f6f4d8d1da321a6423a8ad5b4954562c57a9a
+set(alpakaV_TESTS OFF CACHE BOOL "Disable alpakaVendor tests." FORCE)
+set(alpakaV_DOCS OFF CACHE BOOL "Disable alpakaVendor docs." FORCE)
+set(alpakaV_DEP_FFTW ON CACHE BOOL "Enable the FFTW host backend." FORCE)
+# Resolve the alpakaVendor backend options from the enabled alpaka backends.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/alpakaNNVendorBackends.cmake)
 
-add_subdirectory(extern/alpaka3)
-
-if(alpakaNN_OPENBLAS)
-    set(BUILD_WITHOUT_LAPACK ON CACHE BOOL "OpenBLAS: build BLAS only" FORCE)
-    set(BUILD_WITHOUT_LAPACKE ON CACHE BOOL "OpenBLAS: disable LAPACKE" FORCE)
-    set(BUILD_WITHOUT_CBLAS OFF CACHE BOOL "OpenBLAS: keep CBLAS" FORCE)
-    set(BUILD_TESTING OFF CACHE BOOL "OpenBLAS: disable upstream testing" FORCE)
-    set(BUILD_BENCHMARKS OFF CACHE BOOL "OpenBLAS: disable upstream benchmarks" FORCE)
-    set(BUILD_STATIC_LIBS ON CACHE BOOL "OpenBLAS: build static library" FORCE)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "OpenBLAS: disable shared library" FORCE)
-    set(NOFORTRAN ON CACHE BOOL "OpenBLAS: skip Fortran support" FORCE)
-    set(DYNAMIC_ARCH OFF CACHE BOOL "OpenBLAS: build only the selected CPU target" FORCE)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
-        set(TARGET CORE2 CACHE STRING "OpenBLAS: conservative x86_64 target" FORCE)
-    endif()
-
-    FetchContent_Declare(openblas URL https://github.com/OpenMathLib/OpenBLAS/archive/refs/tags/v0.3.30.tar.gz)
-    FetchContent_MakeAvailable(openblas)
-endif()
+# Pinned to alpakaVendor dev; its extern/alpaka3 submodule is pinned at
+# e91f6f4d8d1da321a6423a8ad5b4954562c57a9a (the single alpaka3 used by alpakaNN).
+FetchContent_Declare(
+    alpakaVendor
+    GIT_REPOSITORY https://github.com/psychocoderHPC/alpakaVendor.git
+    GIT_TAG 03a92cc77e2b0b74e658851337cc6256162edcff
+)
+FetchContent_MakeAvailable(alpakaVendor)
 
 add_library(alpakaNN INTERFACE)
 add_library(alpaka::nn ALIAS alpakaNN)
 set_target_properties(alpakaNN PROPERTIES EXPORT_NAME nn)
 
 target_compile_features(alpakaNN INTERFACE cxx_std_20)
-target_compile_definitions(alpakaNN INTERFACE ALPAKANN_OPENBLAS_ENABLED=$<BOOL:${alpakaNN_OPENBLAS}>)
 target_include_directories(
     alpakaNN
     INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_link_libraries(alpakaNN INTERFACE $<BUILD_INTERFACE:alpaka::alpaka>)
-if(alpakaNN_OPENBLAS)
-    target_link_libraries(alpakaNN INTERFACE openblas)
-    target_include_directories(
-        alpakaNN
-        INTERFACE $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated> $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
-    )
-endif()
-
-if(CUDAToolkit_FOUND)
-    target_link_libraries(alpakaNN INTERFACE CUDA::cublas)
-endif()
-
-add_subdirectory(example/cli)
+target_link_libraries(
+    alpakaNN
+    INTERFACE $<BUILD_INTERFACE:alpaka::alpaka> $<BUILD_INTERFACE:alpakaVendor::alpakaVendor>
+)
 
 if(alpakaNN_BUILD_TESTS)
     include(CTest)

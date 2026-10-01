@@ -8,7 +8,6 @@
 #include <alpaka/alpaka.hpp>
 #include <alpaka/nn/nn/rope.hpp>
 #include <alpaka/nn/onAcc/internal/nn/rope.hpp>
-#include <alpaka/nn/onHost/internal/launch.hpp>
 #include <alpaka/nn/onHost/ops/elementwise.hpp>
 
 #include <cstdint>
@@ -60,7 +59,7 @@ namespace alpaka::nn::onHost::nn
     {
         internal::validateRopeShape(in, out, cosTable, sinTable, positionOffset);
         queue.enqueue(
-            alpaka::nn::onHost::internal::makeFrameSpec(queue.getDevice(), exec, out.getExtents()),
+            alpaka::onHost::getFrameSpec(queue.getDevice(), exec, out.getExtents()),
             alpaka::KernelBundle{
                 alpaka::nn::onAcc::internal::nn::RopeSingleKernel<T_Type>{positionOffset, layout},
                 out,
