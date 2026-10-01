@@ -219,6 +219,8 @@ namespace
         std::vector<double> initial(config.n * config.n, 0.0);
         heatclosure::DeviceSolver solver(queue, device, config, mode, initial, model);
         auto const exportAlpha = !alphaExport.empty();
+        if(noOutput && exportAlpha)
+            throw std::invalid_argument("--export-alpha cannot be combined with --no-output");
         std::ofstream manifest;
         std::optional<AlphaCsvWriter> alphaWriter;
         if(!noOutput)
@@ -230,14 +232,6 @@ namespace
             manifest << "frame,time,step,material,grid,beta\n";
             if(exportAlpha)
                 alphaWriter.emplace(alphaExport, config.n);
-        }
-        else if(exportAlpha)
-        {
-            // A compute-only run may still be asked to export alpha; keep the
-            // directory handling explicit so the export never depends on --frames.
-            auto const parent = alphaExport.parent_path();
-            if(!parent.empty())
-                std::filesystem::create_directories(parent);
         }
         std::size_t frame = 0;
         auto save = [&](std::size_t step)
