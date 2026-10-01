@@ -396,12 +396,18 @@ try
             uHot = std::max(uHot, presetState[i]);
             uCold = std::min(uCold, presetState[i]);
         }
-        // The documented 1% relL2 / 2% normalized-Linf targets are reported but
-        // only enforced when the shipped checkpoint actually meets them; the
-        // current model does not, and this test must not fake a pass.
+        // The documented 1% relL2 / 2% normalized-Linf targets are NOT met by the
+        // shipped demonstrator checkpoint, so they are reported but not enforced
+        // (this test must not fake a pass). To still catch accuracy regressions,
+        // assert a hard regression ceiling measured on the current checkpoint with
+        // 1.25x headroom: measured relL2=0.31485 -> ceiling 0.394, measured
+        // normLinf=0.562251 -> ceiling 0.703. These are regression guards only;
+        // they are not acceptance targets and moving them down is not a fix.
         constexpr double documentedRelL2Target = 0.01;
         constexpr double documentedNormalizedLinfTarget = 0.02;
         constexpr bool enforceDocumentedTargets = false;
+        constexpr double regressionRelL2Ceiling = 0.394;
+        constexpr double regressionNormalizedLinfCeiling = 0.703;
         require(squaredPreset > 0.0, "preset field is identically zero; comparison undefined");
         auto const relL2 = std::sqrt(squaredDelta / squaredPreset);
         auto const spread = uHot - uCold;
@@ -411,7 +417,13 @@ try
         std::cout << "nn_vs_preset relL2=" << relL2 << " normLinf=" << normalizedLinf
                   << " documented_target_relL2=" << documentedRelL2Target
                   << " documented_target_normLinf=" << documentedNormalizedLinfTarget
-                  << " target_enforced=" << (enforceDocumentedTargets ? 1 : 0) << '\n';
+                  << " target_enforced=" << (enforceDocumentedTargets ? 1 : 0)
+                  << " regression_ceiling_relL2=" << regressionRelL2Ceiling
+                  << " regression_ceiling_normLinf=" << regressionNormalizedLinfCeiling << '\n';
+        require(relL2 <= regressionRelL2Ceiling, "nn-vs-preset relL2 regressed past the measured guard");
+        require(
+            normalizedLinf <= regressionNormalizedLinfCeiling,
+            "nn-vs-preset normalized Linf regressed past the measured guard");
         if(enforceDocumentedTargets)
         {
             require(
@@ -555,7 +567,20 @@ try
                                  + quote(dir) + " > " + quote(log) + " 2>&1";
             if(runCommand(command) != 0)
             {
-                allReasons += std::string(candidate) + ": " + readFile(log) + " | ";
+                auto const reason = readFile(log);
+                // Only "not compiled in" or "compiled but no device available"
+                // are legitimate skips. Any other nonzero exit is a real runtime
+                // failure of a backend that is compiled and was expected to run,
+                // so it must fail the test rather than be silently skipped.
+                bool const notCompiledIn
+                    = reason.find("is not compiled in (compiled backends:") != std::string::npos;
+                bool const compiledButUnavailable
+                    = reason.find("is compiled in but no device is available at runtime") != std::string::npos;
+                if(!notCompiledIn && !compiledButUnavailable)
+                    throw std::runtime_error(
+                        std::string("backend parity failed for compiled/available backend ") + candidate + ": "
+                        + reason);
+                allReasons += std::string(candidate) + ": " + reason + " | ";
                 continue;
             }
             auto const secondField = readFinalFrame(dir);

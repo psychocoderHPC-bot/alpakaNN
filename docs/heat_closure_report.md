@@ -62,9 +62,13 @@ Same 64² grid, same 13654-step schedule, same zero initial state, same walls.
 
 Both models **fail** the acceptance targets. The regression test
 `heatEquationNn_device_solver` computes and prints these metrics on its small
-fixed grid (`n=6`, `tmax=0.01`, 20 steps) and reports `relL2=0.31485`,
-`normLinf=0.562251`, with `target_enforced=0`; it deliberately does not fake a
-pass. The 64² matrix values above are the presentation-relevant numbers.
+fixed grid (`n=6`, `tmax=0.01`) from a single conservative step with one shared
+step size and identical zero initial state for the preset and NN solvers (a
+same-schedule single-step comparison, not a 20-step or full-schedule run); it
+reports `relL2=0.31485`, `normLinf=0.562251`, with `target_enforced=0`; it
+deliberately does not fake a pass. A regression ceiling with 1.25x headroom over
+these measured values is asserted so an accuracy regression still fails the
+test. The 64² matrix values above are the presentation-relevant numbers.
 
 ## 7.3 Independent mesh convergence — PASS (monotone, not order-2)
 
