@@ -34,6 +34,21 @@ namespace
             throw std::runtime_error("invalid model accepted: " + caseName);
     }
 
+    void rejectedWithBeta(std::filesystem::path const& weights, double beta, std::string const& caseName)
+    {
+        bool failed = false;
+        try
+        {
+            (void) heatclosure::loadModel(weights, beta);
+        }
+        catch(std::exception const&)
+        {
+            failed = true;
+        }
+        if(!failed)
+            throw std::runtime_error("invalid model accepted: " + caseName);
+    }
+
     std::string compact(std::string const& src)
     {
         std::string out;
@@ -100,6 +115,9 @@ try
     escaped.replace(escapedPos, 1, "\\u0061");
     write(metadata, escaped);
     (void) heatclosure::loadModel(weights, 0.5); // JSON Unicode escape decodes to the same manifest value
+    auto unicode = heatclosure::detail::Parser(R"({"text":"\u00e9\uD83D\uDE00"})").parse();
+    if(heatclosure::detail::get(unicode, "text").string() != "\xc3\xa9\xf0\x9f\x98\x80")
+        throw std::runtime_error("JSON BMP/surrogate Unicode decoding mismatch");
     auto mutation = [&](std::string const& before, std::string const& after, std::string const& label)
     {
         auto altered = original;
@@ -143,6 +161,13 @@ try
         "temperature domain");
     mutation("\"beta_mismatch_policy\": \"reject\"", "\"beta_mismatch_policy\": \"ignore\"", "beta policy");
     mutation("\"beta\": 0.5", "\"beta\": 0.6", "beta");
+    auto negativeBeta = original;
+    auto betaPos = negativeBeta.find("\"beta\": 0.5");
+    if(betaPos == std::string::npos)
+        throw std::runtime_error("test mutation target missing: negative beta");
+    negativeBeta.replace(betaPos, std::string("\"beta\": 0.5").size(), "\"beta\": -0.5");
+    write(metadata, negativeBeta);
+    rejectedWithBeta(weights, -0.5, "negative beta");
     mutation("\"alpha_min\": 0.01", "\"alpha_min\": -0.01", "alpha minimum");
     mutation("\"alpha_max\": 6.0", "\"alpha_max\": 0.0", "alpha maximum");
     mutation("\"alpha_max\": 6.0", "\"alpha_max\": 5.0", "alpha bounds clip true coefficient range");

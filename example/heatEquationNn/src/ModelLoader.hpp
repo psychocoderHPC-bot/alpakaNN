@@ -456,16 +456,15 @@ namespace heatclosure
         out.alphaMin = detail::get(m, "alpha_min").number();
         out.alphaMax = detail::get(m, "alpha_max").number();
         out.beta = detail::get(m, "beta").number();
-        // The reference material has base coefficient in [0.02, 4.0] and
-        // temperature u in [0, 1]. Physical output bounds may be wider than
-        // this envelope (e.g. for recomputed datasets), but may not clip it.
+        // The training and solver contract requires beta >= 0. The reference
+        // material has base coefficient in [0.02, 4.0] and temperature u in
+        // [0, 1]. Output bounds may be wider, but may not clip this envelope.
         auto temperatureFactor = 1.0 + out.beta;
         auto requiredMinimum = 0.02 * std::min(1.0, temperatureFactor);
         auto requiredMaximum = 4.0 * std::max(1.0, temperatureFactor);
-        if(!std::isfinite(out.alphaMin) || !std::isfinite(out.alphaMax) || !std::isfinite(out.beta)
-           || !(out.beta > -1.0) || !(out.alphaMin > 0 && out.alphaMax > out.alphaMin)
-           || out.alphaMin > requiredMinimum || out.alphaMax < requiredMaximum || !std::isfinite(beta)
-           || beta != out.beta)
+        if(!std::isfinite(out.alphaMin) || !std::isfinite(out.alphaMax) || !std::isfinite(out.beta) || out.beta < 0.0
+           || !(out.alphaMin > 0 && out.alphaMax > out.alphaMin) || out.alphaMin > requiredMinimum
+           || out.alphaMax < requiredMaximum || !std::isfinite(beta) || beta != out.beta)
             throw std::runtime_error("invalid model bounds or beta mismatch");
         std::ifstream f(weights, std::ios::binary);
         if(!f)
