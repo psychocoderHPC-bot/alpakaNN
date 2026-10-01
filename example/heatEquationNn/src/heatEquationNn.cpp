@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -17,6 +18,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -124,9 +127,30 @@ namespace
             throw std::runtime_error("failed writing feature metadata");
     }
 
+    /** Pick the executor that matches the selected alpaka API.
+     *
+     * The host path keeps `cpuSerial` so `--backend host` stays byte-for-byte equivalent
+     * to the previous default; the accelerator paths use the matching GPU executor.
+     */
     template<class TDevice>
+    constexpr auto executorFor(TDevice const& device)
+    {
+        using Api = std::decay_t<decltype(device.getApi())>;
+        if constexpr(std::is_same_v<Api, alpaka::api::Cuda>)
+            return alpaka::exec::gpuCuda;
+        else if constexpr(std::is_same_v<Api, alpaka::api::Hip>)
+            return alpaka::exec::gpuHip;
+        else if constexpr(std::is_same_v<Api, alpaka::api::OneApi>)
+            return alpaka::exec::oneApi;
+        else
+            return alpaka::exec::cpuSerial;
+    }
+
+    template<class TDevice, class TExec>
     int run(
         TDevice device,
+        TExec exec,
+        std::string const& backendName,
         heatclosure::Config const& config,
         heatclosure::CoefficientMode mode,
         heatclosure::Model const* model,
@@ -170,7 +194,7 @@ namespace
         auto const outputs = frames > 1 ? frames - 1 : 1;
         for(std::size_t step = 1; step <= solver.steps; ++step)
         {
-            solver.step(queue, alpaka::exec::cpuSerial);
+            solver.step(queue, exec);
             if(!noOutput)
             {
                 while(nextFrame < frames)
@@ -196,12 +220,134 @@ namespace
         if(!std::isfinite(minU) || !std::isfinite(maxU)
            || (strict && (minU < -1e-10 || maxU > 1.0 + 1e-10)))
             throw std::runtime_error("temperature violates finite-value/maximum-principle check");
-        std::cout << "backend=host material=" << (mode == heatclosure::CoefficientMode::neural
-                                                        ? "nn"
-                                                        : (mode == heatclosure::CoefficientMode::preset ? "preset" : "uniform"))
+        std::cout << "backend=" << backendName << " material="
+                  << (mode == heatclosure::CoefficientMode::neural
+                          ? "nn"
+                          : (mode == heatclosure::CoefficientMode::preset ? "preset" : "uniform"))
                   << " grid=" << config.n << " steps=" << solver.steps << " dt=" << solver.dt << " final_range=["
                   << minU << ',' << maxU << "]\n";
         return 0;
+    }
+
+    struct BackendSelection
+    {
+        /// Canonical lowercase API name, or empty for a numeric accelerator index.
+        std::string name;
+        /// Device index within the selected device specification.
+        std::uint32_t deviceIndex = 0;
+        /// A bare device index addresses the first available accelerator.
+        bool firstAccelerator = false;
+    };
+
+    bool isNumeric(std::string const& text)
+    {
+        return !text.empty()
+               && std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+    }
+
+    /** Resolve the `--backend` selector into a canonical name plus device index.
+     *
+     * Accepted selectors: `host`, `hip`/`amd`/`amdgpu`, `cuda`, `oneapi`/`sycl`,
+     * and bare `0`-based accelerator device indices. A selector that is not
+     * compiled into this build is rejected by the caller with the exact missing
+     * build option.
+     */
+    BackendSelection resolveBackend(std::string const& selector)
+    {
+        if(selector == "host")
+            return {"host", 0, false};
+        if(selector == "hip" || selector == "amd" || selector == "amdgpu")
+            return {"hip", 0, false};
+        if(selector == "cuda")
+            return {"cuda", 0, false};
+        if(selector == "oneapi" || selector == "sycl")
+            return {"oneapi", 0, false};
+        if(isNumeric(selector))
+        {
+            auto const index = std::stoull(selector);
+            if(index > std::numeric_limits<std::uint32_t>::max())
+                throw std::invalid_argument("device index out of range for --backend: " + selector);
+            return {"", static_cast<std::uint32_t>(index), true};
+        }
+        throw std::invalid_argument(
+            "unknown --backend selector '" + selector + "' (expected host, hip, cuda, oneapi, or a device index)");
+    }
+
+    std::string lowerName(std::string text)
+    {
+        std::transform(
+            text.begin(),
+            text.end(),
+            text.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    }
+
+    /** Dispatch a resolved selection to a concrete compiled device specification.
+     *
+     * Iterates the alpaka device specifications enabled at compile time (host is
+     * always present), matches the requested canonical name or accelerator index,
+     * checks availability, and constructs the device/queue pair passed to
+     * `DeviceSolver`. Unavailable or unknown requests throw an actionable error.
+     */
+    template<class TFunction>
+    int dispatchBackend(BackendSelection const& selection, TFunction&& launch)
+    {
+        bool matched = false;
+        bool compiledButUnavailable = false;
+        std::string available;
+        int result = 2;
+        std::apply(
+            [&](auto... spec)
+            {
+                // Each spec is visited exactly once; the fold short-circuits via `matched`.
+                ([&]
+                 {
+                     auto const apiName = lowerName(spec.getApi().getName());
+                     if(available.find(apiName) == std::string::npos)
+                     {
+                         if(!available.empty())
+                             available += ", ";
+                         available += apiName;
+                     }
+                     if(matched)
+                         return;
+                     auto const isHost = spec.getApi() == alpaka::api::host;
+                     // Named selectors match one exact API; a numeric selector takes the
+                     // first available accelerator (never host, which is always present).
+                     auto const nameMatches
+                         = selection.firstAccelerator ? !isHost : (selection.name == apiName);
+                     if(!nameMatches)
+                         return;
+                     auto selector = alpaka::onHost::makeDeviceSelector(spec);
+                     if(!selector.isAvailable())
+                     {
+                         compiledButUnavailable = true;
+                         return;
+                     }
+                     if(selection.deviceIndex >= selector.getDeviceCount())
+                         throw std::invalid_argument(
+                             "--backend "
+                             + (selection.name.empty() ? std::to_string(selection.deviceIndex) : selection.name)
+                             + ": device index out of range (available: " + std::to_string(selector.getDeviceCount())
+                             + ")");
+                     auto device = selector.makeDevice(selection.deviceIndex);
+                     result = launch(device, executorFor(device), apiName);
+                     matched = true;
+                 }(),
+                 ...);
+            },
+            alpaka::onHost::enabledDeviceSpecs);
+        if(matched)
+            return result;
+        auto const requested = selection.name.empty() ? std::to_string(selection.deviceIndex) : selection.name;
+        if(compiledButUnavailable)
+            throw std::runtime_error(
+                "--backend " + requested + ": the backend is compiled in but no device is available at runtime "
+                "(compiled backends: " + available + ")");
+        throw std::invalid_argument(
+            "--backend " + requested + " is not compiled in (compiled backends: " + available
+            + "); rebuild with the matching alpaka_DEP_* and device-kind options to enable it");
     }
 } // namespace
 
@@ -237,7 +383,8 @@ try
         else if(arg == "--help")
         {
             std::cout << "--grid N --tmax T --steps N --material uniform|preset|nn --beta B --alpha-min A --alpha-max A "
-                         "--weights FILE --output DIR --frames N --no-output --validate-strict --backend host "
+                         "--weights FILE --output DIR --frames N --no-output --validate-strict "
+                         "--backend host|hip|cuda|oneapi|<device-index> "
                          "--dump-features CSV [--samples N --seed N --temperature-samples N]\n";
             return 0;
         }
@@ -245,8 +392,7 @@ try
     }
     if(material != "uniform" && material != "preset" && material != "nn")
         throw std::invalid_argument("invalid material");
-    if(backend != "host")
-        throw std::invalid_argument("requested backend is unavailable in this build: " + backend);
+    auto const selection = resolveBackend(backend);
     if(!featurePath.empty())
     {
         dumpFeatures(featurePath, sampleCount, seed, temperatureSamples, config.beta);
@@ -255,10 +401,6 @@ try
     if(frames < 2)
         throw std::invalid_argument("frames must be >= 2");
     config.uniformMaterial = material == "uniform";
-    auto selector = alpaka::onHost::makeDeviceSelector(
-        alpaka::onHost::makeDeviceSpec(alpaka::onHost::DeviceSpec{alpaka::api::host, alpaka::deviceKind::cpu}));
-    if(!selector.isAvailable())
-        throw std::runtime_error("host backend unavailable");
     heatclosure::Model model;
     heatclosure::Model const* modelPtr = nullptr;
     auto mode = material == "nn" ? heatclosure::CoefficientMode::neural
@@ -273,7 +415,10 @@ try
             throw std::invalid_argument("CLI alpha bounds must match model metadata");
         modelPtr = &model;
     }
-    return run(selector.makeDevice(0), config, mode, modelPtr, frames, noOutput, config.validateStrict, output);
+    return dispatchBackend(
+        selection,
+        [&](auto device, auto exec, std::string const& backendName)
+        { return run(device, exec, backendName, config, mode, modelPtr, frames, noOutput, config.validateStrict, output); });
 }
 catch(std::exception const& e)
 {

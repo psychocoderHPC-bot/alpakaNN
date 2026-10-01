@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-#include "../src/DeviceSolver.hpp"
-#include "../src/NeuralInference.hpp"
+#include "DeviceSolver.hpp"
+#include "NeuralInference.hpp"
 
 #include <alpaka/alpaka.hpp>
 
