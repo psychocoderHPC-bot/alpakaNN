@@ -1,0 +1,191 @@
+{
+  "schema": "heat-closure-figures/1",
+  "note": "Every figure is rendered from the listed CSV/JSON sources; values are read, never synthesised. Fixed ranges are recorded per figure.",
+  "fixed_ranges": {
+    "temperature": [
+      0.0,
+      1.0
+    ],
+    "temperature_difference": [
+      0.0,
+      0.5
+    ],
+    "coefficient": [
+      0.0,
+      4.5
+    ],
+    "coefficient_error": [
+      0.0,
+      3.5
+    ]
+  },
+  "figures": [
+    {
+      "file": "setup_diagram.png",
+      "sources": [
+        "example/heatEquationNn/src/ConservativeSolver.hpp:baseAlpha/alphaTrue (analytical geometry)"
+      ],
+      "ranges": {
+        "coefficient": [
+          0.0,
+          4.5
+        ]
+      },
+      "note": "specified geometry diagram; not a simulation result"
+    },
+    {
+      "file": "homogeneous_sequence.png",
+      "sources": [
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/uniform/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/uniform/manifest.csv"
+      ],
+      "ranges": {
+        "temperature": [
+          0.0,
+          1.0
+        ]
+      },
+      "note": "uniform mode (alpha=0.5); nearest saved manifest times"
+    },
+    {
+      "file": "coefficient_comparison.png",
+      "sources": [
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/alpha.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/manifest.csv",
+        "alpha_true rebuilt from exported u via base_alpha(x,y)*(1+beta*u)"
+      ],
+      "ranges": {
+        "coefficient": [
+          0.0,
+          4.5
+        ],
+        "coefficient_error": [
+          0.0,
+          3.5
+        ]
+      },
+      "true_max_error": 3.276115137513779,
+      "clipped_points_error_range": 0,
+      "note": "final-model b3a5f955; error-range clipping is purely graphical, the true max error is printed in the title"
+    },
+    {
+      "file": "comparison_000000.png",
+      "sources": [
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/manifest.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/manifest.csv"
+      ],
+      "ranges": {
+        "temperature": [
+          0.0,
+          1.0
+        ],
+        "temperature_difference": [
+          0.0,
+          0.5
+        ]
+      },
+      "note": "nearest saved manifest time (exact match); final-model nn"
+    },
+    {
+      "file": "comparison_000001.png",
+      "sources": [
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/manifest.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/manifest.csv"
+      ],
+      "ranges": {
+        "temperature": [
+          0.0,
+          1.0
+        ],
+        "temperature_difference": [
+          0.0,
+          0.5
+        ]
+      },
+      "note": "nearest saved manifest time (exact match); final-model nn"
+    },
+    {
+      "file": "comparison_000002.png",
+      "sources": [
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/manifest.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/manifest.csv"
+      ],
+      "ranges": {
+        "temperature": [
+          0.0,
+          1.0
+        ],
+        "temperature_difference": [
+          0.0,
+          0.5
+        ]
+      },
+      "note": "nearest saved manifest time (exact match); final-model nn"
+    },
+    {
+      "file": "comparison_000003.png",
+      "sources": [
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/manifest.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/manifest.csv"
+      ],
+      "ranges": {
+        "temperature": [
+          0.0,
+          1.0
+        ],
+        "temperature_difference": [
+          0.0,
+          0.5
+        ]
+      },
+      "note": "nearest saved manifest time (exact match); final-model nn"
+    },
+    {
+      "file": "comparison_000004.png",
+      "sources": [
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/frame_*.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs/host/preset/manifest.csv",
+        "/tmp/alpakaNN-results/nhc-20261001/runs-finalmodel/nn/manifest.csv"
+      ],
+      "ranges": {
+        "temperature": [
+          0.0,
+          1.0
+        ],
+        "temperature_difference": [
+          0.0,
+          0.5
+        ]
+      },
+      "note": "nearest saved manifest time (exact match); final-model nn"
+    },
+    {
+      "file": "final_comparison.png",
+      "sources": [
+        "results/heat_closure/nhc-20261001/summary.json",
+        "summary.json: field_t2_final_model, coefficient_t2_final_model, mesh, timing"
+      ],
+      "ranges": {},
+      "note": "final-model field/coefficient numbers plus primary-matrix timings"
+    },
+    {
+      "file": "backend_table.png",
+      "sources": [
+        "results/heat_closure/nhc-20261001/summary.json",
+        "summary.json: provenance.devices, cross_backend_max_abs_vs_host_final, timing",
+        "/tmp/alpakaNN-results/nhc-20261001/runs/<backend>/nn/alpha.csv"
+      ],
+      "ranges": {},
+      "note": "primary matrix weights f075cffd; skips marked explicitly"
+    }
+  ]
+}
