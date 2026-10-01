@@ -2,6 +2,7 @@
 #pragma once
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -126,6 +127,45 @@ namespace heatclosure
                         return out;
                     if(static_cast<unsigned char>(c) < 0x20)
                         fail();
+                    // JSON text is UTF-8. Preserve valid raw sequences, but reject
+                    // malformed encodings (including overlongs and surrogate codepoints).
+                    if(static_cast<unsigned char>(c) >= 0x80)
+                    {
+                        auto const lead = static_cast<unsigned char>(c);
+                        int continuationCount = 0;
+                        uint32_t codepoint = 0;
+                        if(lead >= 0xc2 && lead <= 0xdf)
+                        {
+                            continuationCount = 1;
+                            codepoint = lead & 0x1f;
+                        }
+                        else if(lead >= 0xe0 && lead <= 0xef)
+                        {
+                            continuationCount = 2;
+                            codepoint = lead & 0x0f;
+                        }
+                        else if(lead >= 0xf0 && lead <= 0xf4)
+                        {
+                            continuationCount = 3;
+                            codepoint = lead & 0x07;
+                        }
+                        else
+                            fail();
+                        out += c;
+                        for(int i = 0; i < continuationCount; ++i)
+                        {
+                            auto const next = static_cast<unsigned char>(take());
+                            if((next & 0xc0) != 0x80)
+                                fail();
+                            codepoint = (codepoint << 6) | (next & 0x3f);
+                            out += static_cast<char>(next);
+                        }
+                        if((continuationCount == 2 && codepoint < 0x800)
+                           || (continuationCount == 3 && codepoint < 0x1'0000)
+                           || (codepoint >= 0xd800 && codepoint <= 0xdfff) || codepoint > 0x10'ffff)
+                            fail();
+                        continue;
+                    }
                     if(c == '\\')
                     {
                         c = take();
@@ -276,7 +316,13 @@ namespace heatclosure
                 }
                 try
                 {
-                    return Json{std::stod(s.substr(b, p - b))};
+                    double number = 0.0;
+                    auto const* first = s.data() + b;
+                    auto const* last = s.data() + p;
+                    auto const result = std::from_chars(first, last, number, std::chars_format::general);
+                    if(result.ec != std::errc{} || result.ptr != last || !std::isfinite(number))
+                        fail();
+                    return Json{number};
                 }
                 catch(...)
                 {

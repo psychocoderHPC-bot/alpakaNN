@@ -2,6 +2,7 @@
 #include "../src/ModelLoader.hpp"
 
 #include <chrono>
+#include <clocale>
 #include <iostream>
 #include <sstream>
 
@@ -118,6 +119,54 @@ try
     auto unicode = heatclosure::detail::Parser(R"({"text":"\u00e9\uD83D\uDE00"})").parse();
     if(heatclosure::detail::get(unicode, "text").string() != "\xc3\xa9\xf0\x9f\x98\x80")
         throw std::runtime_error("JSON BMP/surrogate Unicode decoding mismatch");
+    auto rawUnicode
+        = heatclosure::detail::Parser(std::string("{\"text\":\"") + "\xc3\xa9\xf0\x9f\x98\x80" + "\"}").parse();
+    if(heatclosure::detail::get(rawUnicode, "text").string() != "\xc3\xa9\xf0\x9f\x98\x80")
+        throw std::runtime_error("valid raw UTF-8 JSON string mismatch");
+    for(auto const& invalidUtf8 :
+        {std::string("\xc0\xaf", 2), // overlong
+         std::string("\xed\xa0\x80", 3), // encoded surrogate
+         std::string("\xe2\x82", 2), // truncated
+         std::string(
+             "\xe2"
+             "A"
+             "\xa1",
+             3), // invalid continuation
+         std::string("\xf4\x90\x80\x80", 4)}) // above U+10FFFF
+    {
+        bool rejectedUtf8 = false;
+        try
+        {
+            (void) heatclosure::detail::Parser(std::string("{\"text\":\"") + invalidUtf8 + "\"}").parse();
+        }
+        catch(std::runtime_error const&)
+        {
+            rejectedUtf8 = true;
+        }
+        if(!rejectedUtf8)
+            throw std::runtime_error("invalid raw UTF-8 accepted");
+    }
+    bool duplicateRejected = false;
+    try
+    {
+        (void) heatclosure::detail::Parser(R"({"x":1,"x":2})").parse();
+    }
+    catch(std::runtime_error const&)
+    {
+        duplicateRejected = true;
+    }
+    if(!duplicateRejected)
+        throw std::runtime_error("duplicate JSON object key accepted");
+    auto const* oldLocale = std::setlocale(LC_NUMERIC, nullptr);
+    auto savedLocale = oldLocale ? std::string(oldLocale) : std::string("C");
+    // Exercise under a comma-decimal locale when installed; parsing must remain JSON-locale invariant.
+    for(auto candidate : {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "fr_FR.utf8"})
+        if(std::setlocale(LC_NUMERIC, candidate))
+            break;
+    auto localeNumber = heatclosure::detail::Parser(R"({"n":1.5})").parse();
+    if(heatclosure::detail::get(localeNumber, "n").number() != 1.5)
+        throw std::runtime_error("JSON decimal parsing depends on locale");
+    (void) std::setlocale(LC_NUMERIC, savedLocale.c_str());
     auto mutation = [&](std::string const& before, std::string const& after, std::string const& label)
     {
         auto altered = original;
