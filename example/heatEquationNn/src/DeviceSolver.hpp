@@ -253,17 +253,8 @@ namespace heatclosure
                         device_detail::PackFeatures{dx, static_cast<uint32_t>(cfg.n)},
                         *m_features,
                         m_u});
-                alpaka::nn::onHost::nn::mlp<float>(
-                    queue,
-                    exec,
-                    *m_features,
-                    *m_wgate,
-                    *m_wup,
-                    *m_wdown,
-                    *m_gate,
-                    *m_up,
-                    *m_hidden,
-                    *m_logits);
+                alpaka::nn::onHost::nn::mlp<
+                    float>(queue, exec, *m_features, *m_wgate, *m_wup, *m_wdown, *m_gate, *m_up, *m_hidden, *m_logits);
                 queue.enqueue(
                     alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
                     alpaka::KernelBundle{device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, *m_logits});
@@ -361,10 +352,9 @@ namespace heatclosure
         static std::size_t checkedSteps(Config const& c)
         {
             device_detail::validateGrid(c.n, "DeviceSolver");
-            if(!(c.tmax > 0.0) || !std::isfinite(c.tmax)
-               || !(c.alphaMax > c.alphaMin) || !(c.alphaMin > 0.0) || !std::isfinite(c.alphaMin)
-               || !std::isfinite(c.alphaMax) || !std::isfinite(c.beta) || c.beta < 0.0 || !std::isfinite(c.leftWall)
-               || !std::isfinite(c.rightWall))
+            if(!(c.tmax > 0.0) || !std::isfinite(c.tmax) || !(c.alphaMax > c.alphaMin) || !(c.alphaMin > 0.0)
+               || !std::isfinite(c.alphaMin) || !std::isfinite(c.alphaMax) || !std::isfinite(c.beta) || c.beta < 0.0
+               || !std::isfinite(c.leftWall) || !std::isfinite(c.rightWall))
                 throw std::invalid_argument("invalid device solver configuration");
             auto const dx = 1.0 / static_cast<double>(c.n);
             auto const bound = std::max(c.alphaMax, 4.0 * (1.0 + c.beta));
@@ -396,17 +386,8 @@ namespace heatclosure
                         device_detail::PackFeatures{dx, static_cast<uint32_t>(cfg.n)},
                         *m_features,
                         m_u});
-                alpaka::nn::onHost::nn::mlp<float>(
-                    queue,
-                    exec,
-                    *m_features,
-                    *m_wgate,
-                    *m_wup,
-                    *m_wdown,
-                    *m_gate,
-                    *m_up,
-                    *m_hidden,
-                    *m_logits);
+                alpaka::nn::onHost::nn::mlp<
+                    float>(queue, exec, *m_features, *m_wgate, *m_wup, *m_wdown, *m_gate, *m_up, *m_hidden, *m_logits);
                 queue.enqueue(
                     alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
                     alpaka::KernelBundle{device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, *m_logits});

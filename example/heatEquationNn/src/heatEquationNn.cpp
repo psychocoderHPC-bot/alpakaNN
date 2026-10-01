@@ -135,9 +135,7 @@ namespace
         std::uniform_real_distribution<double> unit(0.0, 1.0);
         auto const gridCount = count / 2;
         auto emit = [&](double u, double x, double y)
-        {
-            file << u << ',' << x << ',' << y << ',' << heatclosure::alphaTrue(x, y, u, beta) << '\n';
-        };
+        { file << u << ',' << x << ',' << y << ',' << heatclosure::alphaTrue(x, y, u, beta) << '\n'; };
         for(std::size_t i = 0; i < gridCount; ++i)
         {
             auto const x = (static_cast<double>(i % 256) + 0.5) / 256.0;
@@ -153,16 +151,25 @@ namespace
             switch((i - gridCount) % 4)
             {
             case 0:
-            {
-                auto const theta = unit(random) * 2.0 * std::acos(-1.0);
-                auto const radius = 0.12 + (unit(random) < 0.5 ? -1.0 : 1.0) * 1.0e-5;
-                x = std::clamp(0.35 + radius * std::cos(theta), 0.0, 1.0);
-                y = std::clamp(0.5 + radius * std::sin(theta), 0.0, 1.0);
+                {
+                    auto const theta = unit(random) * 2.0 * std::acos(-1.0);
+                    auto const radius = 0.12 + (unit(random) < 0.5 ? -1.0 : 1.0) * 1.0e-5;
+                    x = std::clamp(0.35 + radius * std::cos(theta), 0.0, 1.0);
+                    y = std::clamp(0.5 + radius * std::sin(theta), 0.0, 1.0);
+                    break;
+                }
+            case 1:
+                x = 0.45 + (unit(random) < 0.5 ? -1.0 : 1.0) * 1.0e-5;
+                y = 0.45 + 0.1 * unit(random);
                 break;
-            }
-            case 1: x = 0.45 + (unit(random) < 0.5 ? -1.0 : 1.0) * 1.0e-5; y = 0.45 + 0.1 * unit(random); break;
-            case 2: x = 0.65 + (unit(random) < 0.5 ? -1.0 : 1.0) * 1.0e-5; y = 0.45 + 0.1 * unit(random); break;
-            default: x = 0.45 + 0.2 * unit(random); y = 0.45 + (unit(random) < 0.5 ? -1.0 : 1.0) * 1.0e-5; break;
+            case 2:
+                x = 0.65 + (unit(random) < 0.5 ? -1.0 : 1.0) * 1.0e-5;
+                y = 0.45 + 0.1 * unit(random);
+                break;
+            default:
+                x = 0.45 + 0.2 * unit(random);
+                y = 0.45 + (unit(random) < 0.5 ? -1.0 : 1.0) * 1.0e-5;
+                break;
             }
             auto const t = i % temperatureSamples;
             emit(static_cast<double>(t) / static_cast<double>(temperatureSamples - 1), x, y);
@@ -170,11 +177,13 @@ namespace
         if(!file)
             throw std::runtime_error("failed writing feature dump: " + path.string());
         std::ofstream metadata(path.string() + ".metadata.json");
-        metadata << "{\n  \"beta\": " << beta << ",\n  \"alpha_min\": 0.01,\n  \"alpha_max\": 6.0,\n"
+        metadata << "{\n  \"beta\": " << beta
+                 << ",\n  \"alpha_min\": 0.01,\n  \"alpha_max\": 6.0,\n"
                     "  \"seed\": "
                  << seed << ",\n  \"sample_count\": " << count
                  << ",\n  \"temperature_samples\": " << temperatureSamples
-                 << ",\n  \"sampling\": \"uniform temperature levels; regular domain samples plus seeded interface-biased samples\"\n}\n";
+                 << ",\n  \"sampling\": \"uniform temperature levels; regular domain samples plus seeded "
+                    "interface-biased samples\"\n}\n";
         if(!metadata)
             throw std::runtime_error("failed writing feature metadata");
     }
@@ -276,7 +285,8 @@ namespace
             {
                 while(nextFrame < frames)
                 {
-                    auto const targetTime = config.tmax * static_cast<double>(nextFrame) / static_cast<double>(outputs);
+                    auto const targetTime
+                        = config.tmax * static_cast<double>(nextFrame) / static_cast<double>(outputs);
                     auto const targetStep = static_cast<std::size_t>(std::ceil(targetTime / solver.dt));
                     if(step < targetStep)
                         break;
@@ -300,8 +310,7 @@ namespace
         }
         auto const [minIt, maxIt] = std::minmax_element(finalState.begin(), finalState.end());
         auto const minU = *minIt, maxU = *maxIt;
-        if(!std::isfinite(minU) || !std::isfinite(maxU)
-           || (strict && (minU < -1e-10 || maxU > 1.0 + 1e-10)))
+        if(!std::isfinite(minU) || !std::isfinite(maxU) || (strict && (minU < -1e-10 || maxU > 1.0 + 1e-10)))
             throw std::runtime_error("temperature violates finite-value/maximum-principle check");
         std::cout << "backend=" << backendName << " material=" << materialName(mode) << " grid=" << config.n
                   << " steps=" << solver.steps << " dt=" << solver.dt << " final_range=[" << minU << ',' << maxU
@@ -395,41 +404,41 @@ namespace
             [&](auto... spec)
             {
                 // Each spec is visited exactly once; the fold short-circuits via `matched`.
-                ([&]
-                 {
-                     auto const apiName = lowerName(spec.getApi().getName());
-                     if(available.find(apiName) == std::string::npos)
-                     {
-                         if(!available.empty())
-                             available += ", ";
-                         available += apiName;
-                     }
-                     if(matched)
-                         return;
-                     auto const isHost = spec.getApi() == alpaka::api::host;
-                     // Named selectors match one exact API; a numeric selector takes the
-                     // first available accelerator (never host, which is always present).
-                     auto const nameMatches
-                         = selection.firstAccelerator ? !isHost : (selection.name == apiName);
-                     if(!nameMatches)
-                         return;
-                     auto selector = alpaka::onHost::makeDeviceSelector(spec);
-                     if(!selector.isAvailable())
-                     {
-                         compiledButUnavailable = true;
-                         return;
-                     }
-                     if(selection.deviceIndex >= selector.getDeviceCount())
-                         throw std::invalid_argument(
-                             "--backend "
-                             + (selection.name.empty() ? std::to_string(selection.deviceIndex) : selection.name)
-                             + ": device index out of range (available: " + std::to_string(selector.getDeviceCount())
-                             + ")");
-                     auto device = selector.makeDevice(selection.deviceIndex);
-                     result = launch(device, executorFor(device), apiName);
-                     matched = true;
-                 }(),
-                 ...);
+                (
+                    [&]
+                    {
+                        auto const apiName = lowerName(spec.getApi().getName());
+                        if(available.find(apiName) == std::string::npos)
+                        {
+                            if(!available.empty())
+                                available += ", ";
+                            available += apiName;
+                        }
+                        if(matched)
+                            return;
+                        auto const isHost = spec.getApi() == alpaka::api::host;
+                        // Named selectors match one exact API; a numeric selector takes the
+                        // first available accelerator (never host, which is always present).
+                        auto const nameMatches = selection.firstAccelerator ? !isHost : (selection.name == apiName);
+                        if(!nameMatches)
+                            return;
+                        auto selector = alpaka::onHost::makeDeviceSelector(spec);
+                        if(!selector.isAvailable())
+                        {
+                            compiledButUnavailable = true;
+                            return;
+                        }
+                        if(selection.deviceIndex >= selector.getDeviceCount())
+                            throw std::invalid_argument(
+                                "--backend "
+                                + (selection.name.empty() ? std::to_string(selection.deviceIndex) : selection.name)
+                                + ": device index out of range (available: "
+                                + std::to_string(selector.getDeviceCount()) + ")");
+                        auto device = selector.makeDevice(selection.deviceIndex);
+                        result = launch(device, executorFor(device), apiName);
+                        matched = true;
+                    }(),
+                    ...);
             },
             alpaka::onHost::enabledDeviceSpecs);
         if(matched)
@@ -437,8 +446,10 @@ namespace
         auto const requested = selection.name.empty() ? std::to_string(selection.deviceIndex) : selection.name;
         if(compiledButUnavailable)
             throw std::runtime_error(
-                "--backend " + requested + ": the backend is compiled in but no device is available at runtime "
-                "(compiled backends: " + available + ")");
+                "--backend " + requested
+                + ": the backend is compiled in but no device is available at runtime "
+                  "(compiled backends: "
+                + available + ")");
         throw std::invalid_argument(
             "--backend " + requested + " is not compiled in (compiled backends: " + available
             + "); rebuild with the matching alpaka_DEP_* and device-kind options to enable it");
@@ -458,33 +469,53 @@ try
     for(int i = 1; i < argc; ++i)
     {
         auto const arg = std::string{argv[i]};
-        if(arg == "--grid") config.n = parseCount(value(i, argc, argv), "--grid");
-        else if(arg == "--tmax") config.tmax = parseReal(value(i, argc, argv), "--tmax");
-        else if(arg == "--steps") config.steps = parseCount(value(i, argc, argv), "--steps");
-        else if(arg == "--beta") config.beta = parseReal(value(i, argc, argv), "--beta");
-        else if(arg == "--alpha-max") config.alphaMax = parseReal(value(i, argc, argv), "--alpha-max");
-        else if(arg == "--alpha-min") config.alphaMin = parseReal(value(i, argc, argv), "--alpha-min");
-        else if(arg == "--material") material = value(i, argc, argv);
-        else if(arg == "--backend") backend = value(i, argc, argv);
-        else if(arg == "--weights") weights = value(i, argc, argv);
-        else if(arg == "--output") output = value(i, argc, argv);
-        else if(arg == "--export-alpha") alphaExport = value(i, argc, argv);
-        else if(arg == "--frames") frames = parseCount(value(i, argc, argv), "--frames");
-        else if(arg == "--dump-features") featurePath = value(i, argc, argv);
-        else if(arg == "--samples") sampleCount = parseCount(value(i, argc, argv), "--samples");
-        else if(arg == "--seed") seed = parseCount(value(i, argc, argv), "--seed");
-        else if(arg == "--temperature-samples") temperatureSamples = parseCount(value(i, argc, argv), "--temperature-samples");
-        else if(arg == "--no-output") noOutput = true;
-        else if(arg == "--validate-strict") config.validateStrict = true;
+        if(arg == "--grid")
+            config.n = parseCount(value(i, argc, argv), "--grid");
+        else if(arg == "--tmax")
+            config.tmax = parseReal(value(i, argc, argv), "--tmax");
+        else if(arg == "--steps")
+            config.steps = parseCount(value(i, argc, argv), "--steps");
+        else if(arg == "--beta")
+            config.beta = parseReal(value(i, argc, argv), "--beta");
+        else if(arg == "--alpha-max")
+            config.alphaMax = parseReal(value(i, argc, argv), "--alpha-max");
+        else if(arg == "--alpha-min")
+            config.alphaMin = parseReal(value(i, argc, argv), "--alpha-min");
+        else if(arg == "--material")
+            material = value(i, argc, argv);
+        else if(arg == "--backend")
+            backend = value(i, argc, argv);
+        else if(arg == "--weights")
+            weights = value(i, argc, argv);
+        else if(arg == "--output")
+            output = value(i, argc, argv);
+        else if(arg == "--export-alpha")
+            alphaExport = value(i, argc, argv);
+        else if(arg == "--frames")
+            frames = parseCount(value(i, argc, argv), "--frames");
+        else if(arg == "--dump-features")
+            featurePath = value(i, argc, argv);
+        else if(arg == "--samples")
+            sampleCount = parseCount(value(i, argc, argv), "--samples");
+        else if(arg == "--seed")
+            seed = parseCount(value(i, argc, argv), "--seed");
+        else if(arg == "--temperature-samples")
+            temperatureSamples = parseCount(value(i, argc, argv), "--temperature-samples");
+        else if(arg == "--no-output")
+            noOutput = true;
+        else if(arg == "--validate-strict")
+            config.validateStrict = true;
         else if(arg == "--help")
         {
-            std::cout << "--grid N --tmax T --steps N --material uniform|preset|nn --beta B --alpha-min A --alpha-max A "
-                         "--weights FILE --output DIR --export-alpha CSV --frames N --no-output --validate-strict "
-                         "--backend host|hip|cuda|oneapi|<device-index> "
-                         "--dump-features CSV [--samples N --seed N --temperature-samples N]\n";
+            std::cout
+                << "--grid N --tmax T --steps N --material uniform|preset|nn --beta B --alpha-min A --alpha-max A "
+                   "--weights FILE --output DIR --export-alpha CSV --frames N --no-output --validate-strict "
+                   "--backend host|hip|cuda|oneapi|<device-index> "
+                   "--dump-features CSV [--samples N --seed N --temperature-samples N]\n";
             return 0;
         }
-        else throw std::invalid_argument("unknown option: " + arg);
+        else
+            throw std::invalid_argument("unknown option: " + arg);
     }
     if(material != "uniform" && material != "preset" && material != "nn")
         throw std::invalid_argument("invalid material");
@@ -504,9 +535,9 @@ try
     config.uniformMaterial = material == "uniform";
     heatclosure::Model model;
     heatclosure::Model const* modelPtr = nullptr;
-    auto mode = material == "nn" ? heatclosure::CoefficientMode::neural
-                 : material == "preset" ? heatclosure::CoefficientMode::preset
-                                          : heatclosure::CoefficientMode::uniform;
+    auto mode = material == "nn"       ? heatclosure::CoefficientMode::neural
+                : material == "preset" ? heatclosure::CoefficientMode::preset
+                                       : heatclosure::CoefficientMode::uniform;
     if(material == "nn")
     {
         if(weights.empty())

@@ -252,12 +252,7 @@ try
         probeCfg.tmax = 1e-6; // a single conservative step is enough to allocate
         std::vector<double> probeInitial(probeGrid * probeGrid, 0.0);
         auto const before = virtualMemoryKiB();
-        heatclosure::DeviceSolver probe(
-            queue,
-            device,
-            probeCfg,
-            heatclosure::CoefficientMode::uniform,
-            probeInitial);
+        heatclosure::DeviceSolver probe(queue, device, probeCfg, heatclosure::CoefficientMode::uniform, probeInitial);
         auto const after = virtualMemoryKiB();
         std::size_t const probeBatch = probeGrid * probeGrid;
         // Three [batch,64] float workspaces plus the [batch,3] feature buffer.
@@ -268,9 +263,7 @@ try
         {
             auto const growthKiB = after > before ? after - before : 0ull;
             auto const neuralKiB = neuralBytes / 1024ull;
-            require(
-                growthKiB + neuralKiB / 2 < neuralKiB,
-                "uniform mode reserved the neural-only workspace");
+            require(growthKiB + neuralKiB / 2 < neuralKiB, "uniform mode reserved the neural-only workspace");
             std::cout << "neural_workspace_slack uniform_vmsize_growth_KiB=" << growthKiB
                       << " neural_only_KiB=" << neuralKiB << '\n';
         }
@@ -429,7 +422,9 @@ try
 
     // The device step path must not copy anything to the host; only explicit
     // snapshots may synchronize.
-    require(!heatclosure::DeviceSolver<decltype(queue), decltype(device)>::perStepHostCopy, "step path performs a D2H copy");
+    require(
+        !heatclosure::DeviceSolver<decltype(queue), decltype(device)>::perStepHostCopy,
+        "step path performs a D2H copy");
 
     // Exercise the CLI `--export-alpha` / compute-only timing paths end-to-end for
     // the preset and neural coefficient modes on the host backend.
@@ -444,8 +439,8 @@ try
     // preset: exported alpha must equal alphaTrue(x,y,u) for the exported u.
     auto const presetCsv = base / "preset_alpha.csv";
     auto const presetCommand = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material preset --grid " + grid
-                               + " --tmax " + tmax + " --frames 3 --output " + quote(presetDir)
-                               + " --export-alpha " + quote(presetCsv) + " > " + quote(base / "preset.log") + " 2>&1";
+                               + " --tmax " + tmax + " --frames 3 --output " + quote(presetDir) + " --export-alpha "
+                               + quote(presetCsv) + " > " + quote(base / "preset.log") + " 2>&1";
     require(runCommand(presetCommand) == 0, "preset export-alpha run failed");
     auto const presetRows = readAlphaCsv(presetCsv);
     require(presetRows.size() == 3 * static_cast<std::size_t>(16 * 16), "preset export should hold three frames");
@@ -462,9 +457,10 @@ try
 
     // nn: exported alpha must stay within the model bounds and use the nn mode.
     auto const nnCsv = base / "nn_alpha.csv";
-    auto const nnCommand = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material nn --grid " + grid + " --tmax "
-                           + tmax + " --frames 3 --weights " + quote(modelPath) + " --output " + quote(nnDir)
-                           + " --export-alpha " + quote(nnCsv) + " > " + quote(base / "nn.log") + " 2>&1";
+    auto const nnCommand = quote(HEAT_CLOSURE_EXAMPLE_BIN) + " --backend host --material nn --grid " + grid
+                           + " --tmax " + tmax + " --frames 3 --weights " + quote(modelPath) + " --output "
+                           + quote(nnDir) + " --export-alpha " + quote(nnCsv) + " > " + quote(base / "nn.log")
+                           + " 2>&1";
     require(runCommand(nnCommand) == 0, "nn export-alpha run failed");
     auto const nnRows = readAlphaCsv(nnCsv);
     require(nnRows.size() == 3 * static_cast<std::size_t>(16 * 16), "nn export should hold three frames");
@@ -472,7 +468,9 @@ try
     {
         require(row[4] == "nn", "nn export carries the wrong mode");
         auto const alpha = std::stod(row[3]);
-        require(std::isfinite(alpha) && alpha >= model.alphaMin && alpha <= model.alphaMax, "exported NN alpha out of bounds");
+        require(
+            std::isfinite(alpha) && alpha >= model.alphaMin && alpha <= model.alphaMax,
+            "exported NN alpha out of bounds");
     }
 
     // compute-only timing: `--no-output` must still exit 0 and report steps plus
