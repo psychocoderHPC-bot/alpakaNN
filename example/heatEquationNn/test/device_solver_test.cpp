@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 #include "../src/DeviceSolver.hpp"
+#include "../src/NeuralInference.hpp"
 
 #include <alpaka/alpaka.hpp>
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 
@@ -61,6 +63,33 @@ try
         error = std::max(error, std::abs(got[i] - expected[i]));
     require(error < 1e-13, "uniform stencil disagrees with independent reference");
 
+    // Repeated swaps must continue to agree with the independent host implementation.
+    auto hostConfig = c;
+    hostConfig.uniformMaterial = true;
+    heatclosure::Solver hostSolver(hostConfig);
+    hostSolver.u = initial;
+    heatclosure::DeviceSolver repeated(queue, device, c, heatclosure::CoefficientMode::uniform, initial);
+    for(int step = 0; step < 5; ++step)
+    {
+        repeated.step(queue, alpaka::exec::cpuSerial);
+        hostSolver.step();
+        auto const deviceState = repeated.snapshot(queue);
+        for(std::size_t i = 0; i < deviceState.size(); ++i)
+            require(std::abs(deviceState[i] - hostSolver.u[i]) < 1e-13, "multi-step ping-pong mismatch");
+    }
+
+    auto otherQueue = device.makeQueue();
+    bool wrongQueueRejected = false;
+    try
+    {
+        (void) repeated.snapshot(otherQueue);
+    }
+    catch(std::invalid_argument const&)
+    {
+        wrongQueueRejected = true;
+    }
+    require(wrongQueueRejected, "snapshot on a different queue was accepted");
+
     heatclosure::Config equilibrium = c;
     equilibrium.leftWall = equilibrium.rightWall = 0.3;
     std::fill(initial.begin(), initial.end(), 0.3);
@@ -102,16 +131,42 @@ try
     }
     require(unstableRejected, "unstable explicit count accepted");
 
+    bool overflowRejected = false;
+    try
+    {
+        auto enormous = c;
+        enormous.tmax = std::numeric_limits<double>::max();
+        heatclosure::DeviceSolver bad(queue, device, enormous, heatclosure::CoefficientMode::uniform, initial);
+    }
+    catch(std::invalid_argument const&)
+    {
+        overflowRejected = true;
+    }
+    require(overflowRejected, "out-of-range required step count accepted");
+
+    bool wrongStepQueueRejected = false;
+    try
+    {
+        repeated.step(otherQueue, alpaka::exec::cpuSerial);
+    }
+    catch(std::invalid_argument const&)
+    {
+        wrongStepQueueRejected = true;
+    }
+    require(wrongStepQueueRejected, "step on a different queue was accepted");
+
     heatclosure::Config preset = c;
     std::fill(initial.begin(), initial.end(), 0.0);
     heatclosure::DeviceSolver presetSolver(queue, device, preset, heatclosure::CoefficientMode::preset, initial);
     presetSolver.step(queue, alpaka::exec::cpuSerial);
-    auto presetAlpha = presetSolver.coefficientSnapshot(queue);
+    auto presetState = presetSolver.snapshot(queue);
+    auto presetAlpha = presetSolver.coefficientSnapshot(queue, alpaka::exec::cpuSerial);
     for(std::size_t y = 0; y < n; ++y)
         for(std::size_t x = 0; x < n; ++x)
         {
             auto const k = y * n + x;
-            auto const expectedAlpha = heatclosure::baseAlpha((x + 0.5) * dx, (y + 0.5) * dx);
+            auto const expectedAlpha
+                = heatclosure::baseAlpha((x + 0.5) * dx, (y + 0.5) * dx) * (1.0 + preset.beta * presetState[k]);
             require(std::isfinite(presetAlpha[k]) && presetAlpha[k] > 0.0, "preset coefficient invalid");
             require(std::abs(presetAlpha[k] - expectedAlpha) < 1e-14, "preset coefficient mismatch");
         }
@@ -121,10 +176,16 @@ try
     auto nnConfig = c;
     nnConfig.alphaMin = model.alphaMin;
     nnConfig.alphaMax = model.alphaMax;
-    heatclosure::DeviceSolver nnSolver(
-        queue, device, nnConfig, heatclosure::CoefficientMode::neural, initial, &model);
+    heatclosure::DeviceSolver nnSolver(queue, device, nnConfig, heatclosure::CoefficientMode::neural, initial, &model);
     nnSolver.step(queue, alpaka::exec::cpuSerial);
-    auto neuralAlpha = nnSolver.coefficientSnapshot(queue);
+    auto nnState = nnSolver.snapshot(queue);
+    auto neuralAlpha = nnSolver.coefficientSnapshot(queue, alpaka::exec::cpuSerial);
+    std::vector<std::array<double, 3>> features(nnState.size());
+    for(std::size_t i = 0; i < nnState.size(); ++i)
+        features[i] = {nnState[i], ((i % n) + 0.5) / n, ((i / n) + 0.5) / n};
+    auto expectedNeuralAlpha = heatclosure::infer(queue, alpaka::exec::cpuSerial, device, model, features);
+    for(std::size_t i = 0; i < neuralAlpha.size(); ++i)
+        require(std::abs(neuralAlpha[i] - expectedNeuralAlpha[i]) < 2e-6, "NN post-step coefficient parity mismatch");
     for(double value : neuralAlpha)
         require(std::isfinite(value) && value >= model.alphaMin && value <= model.alphaMax, "NN coefficient invalid");
     std::cout << "device solver checks passed\n";

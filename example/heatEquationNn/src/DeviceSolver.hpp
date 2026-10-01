@@ -30,10 +30,13 @@ namespace heatclosure
         {
             double dx;
             uint32_t n;
+
             ALPAKA_FN_ACC void operator()(auto const& acc, auto features, auto u) const
             {
                 for(auto i : alpaka::onAcc::makeIdxMap(
-                        acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{u.getExtents()}))
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{u.getExtents()}))
                 {
                     auto const row = i[0];
                     features[alpaka::Vec{row, 0u}] = static_cast<float>(u[i]);
@@ -46,10 +49,13 @@ namespace heatclosure
         struct NeuralAlpha
         {
             double lo, hi;
+
             ALPAKA_FN_ACC void operator()(auto const& acc, auto alpha, auto logits) const
             {
                 for(auto i : alpaka::onAcc::makeIdxMap(
-                        acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{alpha.getExtents()}))
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{alpha.getExtents()}))
                 {
                     auto const z = static_cast<double>(logits[alpaka::Vec{i[0], 0u}]);
                     auto const s = 1.0 / (1.0 + alpaka::math::exp(-z));
@@ -72,10 +78,13 @@ namespace heatclosure
         {
             double dx, beta;
             uint32_t n;
+
             ALPAKA_FN_ACC void operator()(auto const& acc, auto alpha, auto u) const
             {
                 for(auto i : alpaka::onAcc::makeIdxMap(
-                        acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{u.getExtents()}))
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{u.getExtents()}))
                 {
                     auto const x = (i[0] % n + 0.5) * dx;
                     auto const y = (i[0] / n + 0.5) * dx;
@@ -89,7 +98,9 @@ namespace heatclosure
             ALPAKA_FN_ACC void operator()(auto const& acc, auto alpha) const
             {
                 for(auto i : alpaka::onAcc::makeIdxMap(
-                        acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{alpha.getExtents()}))
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{alpha.getExtents()}))
                     alpha[i] = 0.5;
             }
         };
@@ -99,15 +110,19 @@ namespace heatclosure
             double dx, dt, left, right;
             uint32_t n;
             bool insulatedX;
+
             ALPAKA_FN_ACC static double face(double a, double b)
             {
                 return 2.0 * a * b / (a + b);
             }
+
             ALPAKA_FN_ACC void operator()(auto const& acc, auto next, auto old, auto alpha) const
             {
                 auto const inv = 1.0 / (dx * dx);
                 for(auto i : alpaka::onAcc::makeIdxMap(
-                        acc, alpaka::onAcc::worker::threadsInGrid, alpaka::IdxRange{old.getExtents()}))
+                        acc,
+                        alpaka::onAcc::worker::threadsInGrid,
+                        alpaka::IdxRange{old.getExtents()}))
                 {
                     auto const row = i[0];
                     auto const x = row % n;
@@ -158,15 +173,20 @@ namespace heatclosure
             , steps(checkedSteps(config))
             , dx(1.0 / static_cast<double>(config.n))
             , dt(config.tmax / static_cast<double>(steps))
+            , m_queue(&queue)
             , m_mode(mode)
             , m_u(alpaka::onHost::alloc<double>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n)}))
             , m_next(alpaka::onHost::alloc<double>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n)}))
             , m_alpha(alpaka::onHost::alloc<double>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n)}))
-            , m_features(alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 3u}))
-            , m_logits(alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 1u}))
-            , m_gate(alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 64u}))
+            , m_features(
+                  alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 3u}))
+            , m_logits(
+                  alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 1u}))
+            , m_gate(
+                  alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 64u}))
             , m_up(alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 64u}))
-            , m_hidden(alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 64u}))
+            , m_hidden(
+                  alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(config.n * config.n), 64u}))
             , m_wgate(alpaka::onHost::alloc<float>(device, alpaka::Vec{3u, 64u}))
             , m_wup(alpaka::onHost::alloc<float>(device, alpaka::Vec{3u, 64u}))
             , m_wdown(alpaka::onHost::alloc<float>(device, alpaka::Vec{64u, 1u}))
@@ -193,33 +213,51 @@ namespace heatclosure
 
         void step(TQueue& queue, auto exec)
         {
+            requireQueue(queue);
             if(m_mode == CoefficientMode::neural)
             {
-                queue.enqueue(alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
-                              alpaka::KernelBundle{device_detail::PackFeatures{dx, static_cast<uint32_t>(cfg.n)}, m_features, m_u});
-                alpaka::nn::onHost::nn::mlp<float>(
-                    queue, exec, m_features, m_wgate, m_wup, m_wdown, m_gate, m_up, m_hidden, m_logits);
-                queue.enqueue(alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
-                              alpaka::KernelBundle{
-                                  device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, m_logits});
+                queue.enqueue(
+                    alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                    alpaka::KernelBundle{
+                        device_detail::PackFeatures{dx, static_cast<uint32_t>(cfg.n)},
+                        m_features,
+                        m_u});
+                alpaka::nn::onHost::nn::mlp<
+                    float>(queue, exec, m_features, m_wgate, m_wup, m_wdown, m_gate, m_up, m_hidden, m_logits);
+                queue.enqueue(
+                    alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                    alpaka::KernelBundle{device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, m_logits});
             }
             else if(m_mode == CoefficientMode::preset)
-                queue.enqueue(alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
-                              alpaka::KernelBundle{device_detail::PresetAlpha{dx, cfg.beta, static_cast<uint32_t>(cfg.n)}, m_alpha, m_u});
+                queue.enqueue(
+                    alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                    alpaka::KernelBundle{
+                        device_detail::PresetAlpha{dx, cfg.beta, static_cast<uint32_t>(cfg.n)},
+                        m_alpha,
+                        m_u});
             else
-                queue.enqueue(alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
-                              alpaka::KernelBundle{device_detail::UniformAlpha{}, m_alpha});
-            queue.enqueue(alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
-                          alpaka::KernelBundle{
-                              device_detail::Stencil{dx, dt, cfg.leftWall, cfg.rightWall, static_cast<uint32_t>(cfg.n), cfg.insulatedX},
-                              m_next,
-                              m_u,
-                              m_alpha});
+                queue.enqueue(
+                    alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                    alpaka::KernelBundle{device_detail::UniformAlpha{}, m_alpha});
+            queue.enqueue(
+                alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                alpaka::KernelBundle{
+                    device_detail::Stencil{
+                        dx,
+                        dt,
+                        cfg.leftWall,
+                        cfg.rightWall,
+                        static_cast<uint32_t>(cfg.n),
+                        cfg.insulatedX},
+                    m_next,
+                    m_u,
+                    m_alpha});
             std::swap(m_u, m_next);
         }
 
         std::vector<double> snapshot(TQueue& queue) const
         {
+            requireQueue(queue);
             auto host = alpaka::onHost::allocHost<double>(alpaka::Vec{static_cast<uint32_t>(cfg.n * cfg.n)});
             alpaka::onHost::memcpy(queue, host, m_u);
             alpaka::onHost::wait(queue);
@@ -233,8 +271,13 @@ namespace heatclosure
             return result;
         }
 
-        std::vector<double> coefficientSnapshot(TQueue& queue) const
+        /** Coefficients for the current field state (including after the most recent step). */
+        std::vector<double> coefficientSnapshot(TQueue& queue, auto exec)
         {
+            requireQueue(queue);
+            // step() leaves alpha for the state it consumed. Recompute for the present
+            // temperature so coefficient diagnostics are aligned with snapshots of u.
+            updateAlpha(queue, exec);
             auto host = alpaka::onHost::allocHost<double>(alpaka::Vec{static_cast<uint32_t>(cfg.n * cfg.n)});
             alpaka::onHost::memcpy(queue, host, m_alpha);
             alpaka::onHost::wait(queue);
@@ -249,6 +292,7 @@ namespace heatclosure
         }
 
     private:
+        TQueue* m_queue;
         CoefficientMode m_mode;
         Field m_u, m_next, m_alpha;
         decltype(alpaka::onHost::alloc<float>(std::declval<TDevice const&>(), alpaka::Vec{1u, 3u})) m_features;
@@ -260,20 +304,58 @@ namespace heatclosure
 
         static std::size_t checkedSteps(Config const& c)
         {
-            if(c.n < 2 || c.n > std::numeric_limits<uint32_t>::max() / c.n
-               || !(c.tmax > 0.0) || !std::isfinite(c.tmax) || !(c.alphaMax > c.alphaMin)
-               || !(c.alphaMin > 0.0) || !std::isfinite(c.alphaMin) || !std::isfinite(c.alphaMax)
-               || !std::isfinite(c.beta) || c.beta < 0.0 || !std::isfinite(c.leftWall)
+            if(c.n < 2 || c.n > std::numeric_limits<uint32_t>::max() / c.n || !(c.tmax > 0.0) || !std::isfinite(c.tmax)
+               || !(c.alphaMax > c.alphaMin) || !(c.alphaMin > 0.0) || !std::isfinite(c.alphaMin)
+               || !std::isfinite(c.alphaMax) || !std::isfinite(c.beta) || c.beta < 0.0 || !std::isfinite(c.leftWall)
                || !std::isfinite(c.rightWall))
                 throw std::invalid_argument("invalid device solver configuration");
             auto const dx = 1.0 / static_cast<double>(c.n);
             auto const bound = std::max(c.alphaMax, 4.0 * (1.0 + c.beta));
-            auto const limit = 0.9 / (bound * (5.0 / (dx * dx)));
-            auto const minimum = static_cast<std::size_t>(std::ceil(c.tmax / limit));
+            auto const limit = (0.9 * dx * dx) / (5.0 * bound);
+            auto const required = c.tmax / limit;
+            if(!(limit > 0.0) || !std::isfinite(limit) || !std::isfinite(required)
+               || required >= static_cast<double>(std::numeric_limits<std::size_t>::max()))
+                throw std::invalid_argument("required timestep count is out of range");
+            auto const minimum = static_cast<std::size_t>(std::ceil(required));
             auto const count = c.steps == 0 ? minimum : c.steps;
             if(count < minimum)
                 throw std::invalid_argument("unstable explicit timestep; minimum steps=" + std::to_string(minimum));
             return count;
+        }
+
+        void requireQueue(TQueue& queue) const
+        {
+            if(&queue != m_queue)
+                throw std::invalid_argument("DeviceSolver operations must use its construction queue");
+        }
+
+        void updateAlpha(TQueue& queue, auto exec)
+        {
+            if(m_mode == CoefficientMode::neural)
+            {
+                queue.enqueue(
+                    alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                    alpaka::KernelBundle{
+                        device_detail::PackFeatures{dx, static_cast<uint32_t>(cfg.n)},
+                        m_features,
+                        m_u});
+                alpaka::nn::onHost::nn::mlp<
+                    float>(queue, exec, m_features, m_wgate, m_wup, m_wdown, m_gate, m_up, m_hidden, m_logits);
+                queue.enqueue(
+                    alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                    alpaka::KernelBundle{device_detail::NeuralAlpha{cfg.alphaMin, cfg.alphaMax}, m_alpha, m_logits});
+            }
+            else if(m_mode == CoefficientMode::preset)
+                queue.enqueue(
+                    alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                    alpaka::KernelBundle{
+                        device_detail::PresetAlpha{dx, cfg.beta, static_cast<uint32_t>(cfg.n)},
+                        m_alpha,
+                        m_u});
+            else
+                queue.enqueue(
+                    alpaka::onHost::getFrameSpec(queue.getDevice(), exec, m_u.getExtents()),
+                    alpaka::KernelBundle{device_detail::UniformAlpha{}, m_alpha});
         }
 
         void allocateModel(TQueue& queue, Model const& model)
