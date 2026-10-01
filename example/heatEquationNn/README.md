@@ -31,13 +31,17 @@ units as `alpha_min + (alpha_max-alpha_min)*sigmoid(z)`. Model bounds/beta must
 match CLI options. Train/regenerate via
 `python3 tools/train_heat_closure.py --help` (PyTorch required).
 
-**This checkpoint is not a validated accurate closure.** Its metadata reports
-validation coefficient MSE 0.6541, MAE 0.5190, and maximum absolute error
-3.9792 (2000 epochs; checkpoint selected at epoch 1989). The conductor-region
-validation MSE is 8.2455. These poor metrics must not be interpreted as model
-quality or a production recommendation. The final export skips test evaluation;
-test data were inadvertently evaluated in earlier exploratory tuner runs and
-are not reported as a clean final-model estimate.
+**This checkpoint is not a validated accurate closure; the training pipeline's
+own acceptance verdict is FAIL.** The metadata's acceptance targets
+(MAE <= 0.30 and maximum absolute error <= 1.20, from `0.05*alpha_max` and
+`0.20*alpha_max`) are not met. Spatial-evaluation metrics: MAE 0.3363, maximum
+absolute error 1.2519. Validation: MAE 0.4527, maximum absolute error 4.4188.
+Test: MAE 0.4673, maximum absolute error 4.4900. Clean holdout: MAE 0.4522,
+maximum absolute error 4.8138. The largest errors are concentrated in the
+conductor region (validation/test/clean-holdout conductor maximum absolute
+error ~4.4-4.8). These numbers must not be interpreted as model quality or a
+production recommendation: the example demonstrates the inference path, not an
+accurate closure.
 
 Inference is deliberately host-only and batched once per time step. The solver
 state and conservative stencil remain `std::vector<double>` host data; no
