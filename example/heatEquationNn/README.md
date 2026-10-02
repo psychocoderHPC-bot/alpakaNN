@@ -243,29 +243,65 @@ install because no CUDA/level_zero UR adapter ships with it. See
 
 A runtime model is a companion pair `weights.bin` + `weights.bin.metadata.json`.
 Only the metadata manifest is tracked here; supply or regenerate the binary (see
-section 2). The loader in `src/ModelLoader.hpp` accepts only:
+section 2). The loader in `src/ModelLoader.hpp` reads the width, input
+dimension, feature encoding and weight shapes from the metadata; nothing about
+the architecture is hardcoded. Two metadata formats are accepted.
 
-- `format = "alpakaNN-heat-closure-f32-v1"`, `kind = "trained_model"`,
-  `architecture = "gated_silu_bias_free_v1"`, `dtype = "float32"`.
+### v1 — raw contract (`alpakaNN-heat-closure-f32-v1`)
+
+- `architecture = "gated_silu_bias_free_v1"`, `dtype = "float32"`.
 - `feature_order = ["u","x","y"]`; output
   `alpha_min + (alpha_max - alpha_min) * sigmoid(z)`; weight layout
   `row-major [in,out], little-endian float32; gate,up,down concatenated`;
-  shapes `[3,64]`, `[3,64]`, `[64,1]` (1792 bytes).
-- `beta` matching `--beta` exactly (`beta_mismatch_policy = "reject"`), and
-  non-negative finite bounds with `alpha_max >= 4*(1+beta)`.
-- A weight payload whose size and SHA-256 equal the metadata
-  (`weights_sha256`); the weights are checked for finiteness.
+  shapes `[3,64]`, `[3,64]`, `[64,1]` (1792 bytes, 448 floats).
+- `format` is the discriminator; `feature_encoding` is optional and defaults to
+  `raw`.
+
+### v2 — Fourier-encoded contract (`alpakaNN-heat-closure-f32-v2`)
+
+- Same architecture, dtype, output equation and weight-layout string.
+- `feature_encoding = "fourier_xy_k0_5"` (required for v2).
+- `feature_order` is the fully expanded 27-name order produced by the training
+  harness: `["u","x","y","sin1pi_x","cos1pi_x","sin1pi_y","cos1pi_y", ...]`
+  with `k = 0..5` terms `sin2^k pi coord`, `cos2^k pi coord` for
+  `coord in (x, y)`. The compact `["u","x","y"]` form is also accepted.
+- shapes `[27,64]`, `[27,64]`, `[64,1]` (14080 bytes, 3520 floats):
+  `Wgate,Wup [27,64]`, `Wdown [64,1]`.
+
+Common validation (both formats): `beta` matching `--beta` exactly
+(`beta_mismatch_policy = "reject"`), non-negative finite bounds with
+`alpha_max >= 4*(1+beta)`, `feature_encoding ∈ {raw, fourier_xy_k0_5}`,
+consistent `weight_shapes` and total byte size `4*sum(products)`, and a weight
+payload whose SHA-256 equals `weights_sha256` (all floats finite). Unknown
+formats or encodings are rejected.
 
 The forward pass is bias-free and identical in PyTorch and C++:
 
 ```text
-f = [u, x, y]
-g = f Wgate            Wgate: [3, 64]
-p = f Wup              Wup:   [3, 64]
+f = encode(u, x, y)    # raw: [u, x, y]; v2: 27 Fourier columns
+g = f Wgate            Wgate: [in, 64]
+p = f Wup              Wup:   [in, 64]
 h = SiLU(g) ⊙ p
 z = h Wdown            Wdown: [64, 1]
 alpha_NN = alpha_min + (alpha_max - alpha_min) sigmoid(z)
 ```
+
+`PackFeatures` (device) and `NeuralInference.hpp` (host parity) build the same
+feature matrix; for v2 the `sin`/`cos` terms are evaluated with device math in
+the solver kernel, so the inference path stays on the accelerator.
+
+### Retraining the v2 (variant B) model
+
+The feasibility study (`/tmp/alpakaNN-results/nhc-20261001/fit-study/FIT_STUDY.md`
+on the dev host, not committed) trains the Fourier variant B. The committed
+`tools/train_heat_closure.py` emits the v1 metadata; the v2 binary is produced by
+the study harness or by re-exporting the same architecture with the expanded
+feature order. **The trained binary is not committed** (the operator decision is
+"do not check in the model binary; everyone can retrain it"); only the small
+documentation manifest is tracked. The C++ tests self-generate a v1 and a v2
+fixture, so a fresh checkout builds and passes without any model binary. When
+you pass a retrained `--weights FILE`, `--material nn` accepts either format and
+takes the alpha bounds from that metadata.
 
 The coefficient is computed from the current state **before the first update**
 and recomputed every step; solver arithmetic stays `double` while network I/O

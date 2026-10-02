@@ -390,6 +390,95 @@ try
     for(double value : neuralAlpha)
         require(std::isfinite(value) && value >= model.alphaMin && value <= model.alphaMax, "NN coefficient invalid");
 
+    // v2 device-vs-host parity on a small grid: the Fourier PackFeatures kernel
+    // (device) must agree with the host feature expansion and the shared MLP.
+    {
+        auto const v2Dir = modelDir / "v2";
+        auto const v2Path = heatclosure::test::writeFixture(v2Dir, heatclosure::FeatureEncoding::fourier_xy_k0_5);
+        auto v2model = heatclosure::loadModel(v2Path, c.beta);
+        require(
+            v2model.encoding == heatclosure::FeatureEncoding::fourier_xy_k0_5 && v2model.inputDim == 27,
+            "v2 fixture did not load as a 27-feature model");
+        auto v2config = c;
+        v2config.alphaMin = v2model.alphaMin;
+        v2config.alphaMax = v2model.alphaMax;
+        std::vector<double> v2initial(n * n);
+        for(std::size_t y = 0; y < n; ++y)
+            for(std::size_t x = 0; x < n; ++x)
+                v2initial[y * n + x] = 0.05 + 0.02 * static_cast<double>(x) + 0.01 * static_cast<double>(y);
+        heatclosure::DeviceSolver
+            v2solver(queue, device, v2config, heatclosure::CoefficientMode::neural, v2initial, &v2model);
+        auto v2state = v2solver.snapshot(queue);
+        auto v2alpha = v2solver.coefficientSnapshot(queue, alpaka::exec::cpuSerial);
+        std::vector<std::array<double, 3>> v2points(v2state.size());
+        for(std::size_t i = 0; i < v2state.size(); ++i)
+            v2points[i] = {v2state[i], ((i % n) + 0.5) / n, ((i / n) + 0.5) / n};
+        auto v2host = heatclosure::infer(queue, alpaka::exec::cpuSerial, device, v2model, v2points);
+        for(std::size_t i = 0; i < v2alpha.size(); ++i)
+            require(std::abs(v2alpha[i] - v2host[i]) < 2e-6, "v2 device-vs-host coefficient parity mismatch");
+        for(double value : v2alpha)
+            require(
+                std::isfinite(value) && value >= v2model.alphaMin && value <= v2model.alphaMax,
+                "v2 NN coefficient invalid");
+
+        // PackFeatures must emit 27 finite values per row for v2.
+        auto featureDevice = alpaka::onHost::alloc<float>(device, alpaka::Vec{static_cast<uint32_t>(n * n), 27u});
+        auto hostU = alpaka::onHost::allocHost<double>(alpaka::Vec{static_cast<uint32_t>(n * n)});
+        for(std::size_t i = 0; i < v2state.size(); ++i)
+            hostU[alpaka::Vec{static_cast<uint32_t>(i)}] = v2initial[i];
+        auto deviceU = alpaka::onHost::allocLike(device, hostU);
+        alpaka::onHost::memcpy(queue, deviceU, hostU);
+        auto const frame = alpaka::onHost::getFrameSpec(device, alpaka::exec::cpuSerial, deviceU.getExtents());
+        queue.enqueue(
+            frame,
+            alpaka::KernelBundle{
+                heatclosure::device_detail::PackFeatures<heatclosure::FeatureEncoding::fourier_xy_k0_5>{
+                    1.0 / static_cast<double>(n),
+                    static_cast<uint32_t>(n)},
+                featureDevice,
+                deviceU});
+        auto hostFeatures = alpaka::onHost::allocHost<float>(alpaka::Vec{static_cast<uint32_t>(n * n), 27u});
+        alpaka::onHost::memcpy(queue, hostFeatures, featureDevice);
+        alpaka::onHost::wait(queue);
+        auto finiteColumns = 0.0;
+        for(std::size_t row = 0; row < n * n; ++row)
+        {
+            auto const x = ((row % n) + 0.5) / static_cast<double>(n);
+            auto const y = ((row / n) + 0.5) / static_cast<double>(n);
+            require(
+                std::abs(hostFeatures[alpaka::Vec{static_cast<uint32_t>(row), 0u}] - v2initial[row]) < 1e-6,
+                "v2 feature row is missing u");
+            require(
+                std::abs(hostFeatures[alpaka::Vec{static_cast<uint32_t>(row), 1u}] - x) < 1e-6,
+                "v2 feature row is missing x");
+            require(
+                std::abs(hostFeatures[alpaka::Vec{static_cast<uint32_t>(row), 2u}] - y) < 1e-6,
+                "v2 feature row is missing y");
+            for(uint32_t column = 3; column < 27u; ++column)
+            {
+                // Contract order: for k=(c-3)/4, ord=(c-3)%4 it is
+                // sin(2^k*pi*x), cos(2^k*pi*x), sin(2^k*pi*y), cos(2^k*pi*y).
+                auto const k = (column - 3u) / 4u;
+                auto const ord = (column - 3u) % 4u;
+                constexpr double pi = 3.14159265358979323846;
+                auto const w = static_cast<double>(1u << k) * pi;
+                auto const expected = ord == 0u   ? std::sin(w * x)
+                                      : ord == 1u ? std::cos(w * x)
+                                      : ord == 2u ? std::sin(w * y)
+                                                  : std::cos(w * y);
+                auto const value = hostFeatures[alpaka::Vec{static_cast<uint32_t>(row), column}];
+                require(std::isfinite(value), "v2 PackFeatures emitted a non-finite value");
+                require(
+                    std::abs(static_cast<double>(value) - expected) < 1e-6,
+                    "v2 PackFeatures Fourier column value mismatch");
+                finiteColumns += 1.0;
+            }
+        }
+        require(finiteColumns > 0.0, "v2 PackFeatures emitted no Fourier columns");
+        std::cout << "v2_parity rows=" << (n * n) << " max_abs_delta<2e-6 finite_fourier_values=" << finiteColumns
+                  << '\n';
+    }
+
     // Same-grid nn-vs-preset final-field comparison from an identical zero start
     // (presetState/nnState both consumed the same number of steps at the same dt).
     {

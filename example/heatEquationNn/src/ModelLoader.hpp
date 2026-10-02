@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -28,24 +29,39 @@ namespace heatclosure
             using Object = std::map<std::string, Json>;
             std::variant<std::nullptr_t, bool, double, std::string, Array, Object> value;
 
+            /** Type-checked variant access.
+             *
+             * A syntactically valid manifest can still declare a field with the
+             * wrong JSON type (e.g. `"format": 1`). `std::get` would terminate via
+             * `std::bad_variant_access`; metadata is untrusted input, so report the
+             * documented metadata error instead.
+             */
+            template<typename T>
+            T const& requireType() const
+            {
+                if(auto const* p = std::get_if<T>(&value))
+                    return *p;
+                throw std::runtime_error("malformed model JSON metadata");
+            }
+
             Object const& object() const
             {
-                return std::get<Object>(value);
+                return requireType<Object>();
             }
 
             Array const& array() const
             {
-                return std::get<Array>(value);
+                return requireType<Array>();
             }
 
             std::string const& string() const
             {
-                return std::get<std::string>(value);
+                return requireType<std::string>();
             }
 
             double number() const
             {
-                return std::get<double>(value);
+                return requireType<double>();
             }
         };
 
@@ -450,12 +466,86 @@ namespace heatclosure
         }
     } // namespace detail
 
+    /** Feature basis of a loaded model.
+     *
+     * `raw` is the original v1 contract: `f = [u, x, y]`. `fourier_xy_k0_5` is the
+     * variant-B contract: `f = [u, x, y]` followed by, for each coordinate in
+     * `(x, y)` and `k = 0..5`, `sin(2^k*pi*coord)` and `cos(2^k*pi*coord)`.
+     * The kernel order is `sin_x, cos_x, sin_y, cos_y` for increasing `k`, which
+     * matches the training feature order recorded in the metadata.
+     */
+    enum class FeatureEncoding
+    {
+        raw,
+        fourier_xy_k0_5
+    };
+
     struct Model
     {
         double alphaMin{}, alphaMax{}, beta{};
-        std::array<float, 192> gate{}, up{};
-        std::array<float, 64> down{};
+        FeatureEncoding encoding = FeatureEncoding::raw;
+        std::size_t inputDim = 3;
+        std::size_t width = 64;
+        // gate/up are [inputDim, width] row-major, down is [width, 1]; all float32.
+        std::vector<float> gate{}, up{}, down{};
     };
+
+    namespace detail
+    {
+        inline std::size_t expectedInputDim(FeatureEncoding encoding)
+        {
+            return encoding == FeatureEncoding::fourier_xy_k0_5 ? 27u : 3u;
+        }
+
+        /** Feature column names in contract order for a given encoding. */
+        inline std::vector<std::string> expectedFeatureOrder(FeatureEncoding encoding)
+        {
+            std::vector<std::string> names{"u", "x", "y"};
+            if(encoding == FeatureEncoding::fourier_xy_k0_5)
+                for(int k = 0; k < 6; ++k)
+                {
+                    auto const prefix = std::to_string(1 << k);
+                    names.push_back("sin" + prefix + "pi_x");
+                    names.push_back("cos" + prefix + "pi_x");
+                    names.push_back("sin" + prefix + "pi_y");
+                    names.push_back("cos" + prefix + "pi_y");
+                }
+            return names;
+        }
+
+        inline FeatureEncoding parseEncoding(std::string const& value)
+        {
+            if(value == "raw")
+                return FeatureEncoding::raw;
+            if(value == "fourier_xy_k0_5")
+                return FeatureEncoding::fourier_xy_k0_5;
+            throw std::runtime_error("unsupported model metadata: feature_encoding");
+        }
+
+        /** Validate the declared feature order against the encoding.
+         *
+         * Two equivalent forms are accepted: the compact `["u","x","y"]` used by v1,
+         * and the fully expanded 27-entry order recorded by the training harness.
+         */
+        inline void validateFeatureOrder(Json const& m, FeatureEncoding encoding)
+        {
+            auto featureNode = get(m, "feature_order");
+            auto const& features = featureNode.array();
+            auto const expected = expectedFeatureOrder(encoding);
+            if(features.size() == 3)
+            {
+                if(features[0].string() != expected[0] || features[1].string() != expected[1]
+                   || features[2].string() != expected[2])
+                    throw std::runtime_error("unsupported feature order");
+                return;
+            }
+            if(features.size() != expected.size())
+                throw std::runtime_error("unsupported feature order");
+            for(std::size_t i = 0; i < expected.size(); ++i)
+                if(features[i].string() != expected[i])
+                    throw std::runtime_error("unsupported feature order");
+        }
+    } // namespace detail
 
     inline Model loadModel(std::filesystem::path const& weights, double beta)
     {
@@ -466,7 +556,24 @@ namespace heatclosure
             throw std::runtime_error("cannot open model metadata: " + path.string());
         std::string text((std::istreambuf_iterator<char>(mf)), {});
         auto m = detail::Parser(text).parse();
-        detail::equal(m, "format", "alpakaNN-heat-closure-f32-v1");
+        auto const format = detail::get(m, "format").string();
+        FeatureEncoding encoding = FeatureEncoding::raw;
+        if(format == "alpakaNN-heat-closure-f32-v1")
+            encoding = FeatureEncoding::raw;
+        else if(format == "alpakaNN-heat-closure-f32-v2")
+            encoding = FeatureEncoding::fourier_xy_k0_5;
+        else
+            throw std::runtime_error("unsupported model metadata: format");
+        // `feature_encoding` is optional for v1 (raw is implied) but must be present
+        // and consistent when declared.
+        auto const encodingIt = m.object().find("feature_encoding");
+        if(encodingIt != m.object().end())
+        {
+            if(detail::parseEncoding(encodingIt->second.string()) != encoding)
+                throw std::runtime_error("unsupported model metadata: feature_encoding");
+        }
+        else if(encoding != FeatureEncoding::raw)
+            throw std::runtime_error("missing model metadata: feature_encoding");
         detail::equal(m, "architecture", "gated_silu_bias_free_v1");
         detail::equal(m, "dtype", "float32");
         detail::equal(m, "weight_layout", "row-major [in,out], little-endian float32; gate,up,down concatenated");
@@ -478,27 +585,42 @@ namespace heatclosure
             "base(x,y) * (1 + beta*u); inclusion if r2 < 0.12^2 => 0.02; else conductor if abs(y-0.5)<0.05 and "
             "0.45<x<0.65 => 4.0; else 0.5+0.4*H(sin(6*pi*y)), H(z)=1 iff z>=0");
         detail::equal(m, "weights_file", weights.filename().string().c_str());
-        auto featureNode = detail::get(m, "feature_order");
-        auto const& features = featureNode.array();
-        if(features.size() != 3 || features[0].string() != "u" || features[1].string() != "x"
-           || features[2].string() != "y")
-            throw std::runtime_error("unsupported feature order");
+        detail::validateFeatureOrder(m, encoding);
+        auto const inputDim = detail::expectedInputDim(encoding);
+        auto const widthNode = detail::get(m, "width").number();
+        if(!std::isfinite(widthNode) || widthNode < 1.0 || widthNode > 1.0e6 || widthNode != std::floor(widthNode))
+            throw std::runtime_error("unsupported model width");
+        auto const width = static_cast<std::size_t>(widthNode);
         auto shapeNode = detail::get(m, "weight_shapes");
         auto const& shapes = shapeNode.array();
         if(shapes.size() != 3)
             throw std::runtime_error("unsupported weight shapes");
-        for(size_t i = 0; i < 3; ++i)
+        std::array<std::array<std::size_t, 2>, 3> shape{};
+        for(std::size_t i = 0; i < 3; ++i)
         {
             auto const& a = shapes[i].array();
-            std::array<double, 2> expected = i == 2 ? std::array<double, 2>{64, 1} : std::array<double, 2>{3, 64};
-            if(a.size() != 2 || a[0].number() != expected[0] || a[1].number() != expected[1])
+            if(a.size() != 2)
                 throw std::runtime_error("unsupported weight shapes");
+            for(std::size_t j = 0; j < 2; ++j)
+            {
+                auto const value = a[j].number();
+                if(!std::isfinite(value) || value < 1.0 || value > 1.0e6 || value != std::floor(value))
+                    throw std::runtime_error("unsupported weight shapes");
+                shape[i][j] = static_cast<std::size_t>(value);
+            }
         }
-        if(detail::get(m, "width").number() != 64)
-            throw std::runtime_error("unsupported model width");
+        auto const expected = std::array<std::array<std::size_t, 2>, 3>{
+            std::array<std::size_t, 2>{inputDim, width},
+            std::array<std::size_t, 2>{inputDim, width},
+            std::array<std::size_t, 2>{width, 1}};
+        if(shape != expected)
+            throw std::runtime_error("unsupported weight shapes");
         detail::array(m, "coordinate_domain", {0, 1});
         detail::array(m, "temperature_domain", {0, 1});
         Model out;
+        out.encoding = encoding;
+        out.inputDim = inputDim;
+        out.width = width;
         out.alphaMin = detail::get(m, "alpha_min").number();
         out.alphaMax = detail::get(m, "alpha_max").number();
         out.beta = detail::get(m, "beta").number();
@@ -512,14 +634,19 @@ namespace heatclosure
            || !(out.alphaMin > 0 && out.alphaMax > out.alphaMin) || out.alphaMin > requiredMinimum
            || out.alphaMax < requiredMaximum || !std::isfinite(beta) || beta != out.beta)
             throw std::runtime_error("invalid model bounds or beta mismatch");
+        auto const total = 2 * inputDim * width + width;
+        if(total > std::numeric_limits<std::size_t>::max() / 4)
+            throw std::runtime_error("model weight size overflow");
         std::ifstream f(weights, std::ios::binary);
         if(!f)
             throw std::runtime_error("cannot open model weights: " + weights.string());
         std::vector<unsigned char> b((std::istreambuf_iterator<char>(f)), {});
-        if(b.size() != 1792 || detail::sha256(b) != detail::get(m, "weights_sha256").string())
-            throw std::runtime_error("model weight size or checksum mismatch");
-        std::vector<float> w(448);
-        for(size_t i = 0; i < w.size(); ++i)
+        if(b.size() != 4 * total)
+            throw std::runtime_error("model weight size mismatch");
+        if(detail::sha256(b) != detail::get(m, "weights_sha256").string())
+            throw std::runtime_error("model weight checksum mismatch");
+        std::vector<float> w(total);
+        for(std::size_t i = 0; i < w.size(); ++i)
         {
             uint32_t u = uint32_t(b[4 * i]) | uint32_t(b[4 * i + 1]) << 8 | uint32_t(b[4 * i + 2]) << 16
                          | uint32_t(b[4 * i + 3]) << 24;
@@ -527,9 +654,12 @@ namespace heatclosure
             if(!std::isfinite(w[i]))
                 throw std::runtime_error("non-finite model weight");
         }
-        std::copy_n(w.begin(), 192, out.gate.begin());
-        std::copy_n(w.begin() + 192, 192, out.up.begin());
-        std::copy_n(w.begin() + 384, 64, out.down.begin());
+        auto const perMatrix = inputDim * width;
+        out.gate.assign(w.begin(), w.begin() + static_cast<std::ptrdiff_t>(perMatrix));
+        out.up.assign(
+            w.begin() + static_cast<std::ptrdiff_t>(perMatrix),
+            w.begin() + static_cast<std::ptrdiff_t>(2 * perMatrix));
+        out.down.assign(w.begin() + static_cast<std::ptrdiff_t>(2 * perMatrix), w.end());
         return out;
     }
 } // namespace heatclosure

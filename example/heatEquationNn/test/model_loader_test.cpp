@@ -116,19 +116,138 @@ try
     auto weights = temp / "weights.bin", metadata = std::filesystem::path(weights.string() + ".metadata.json");
     auto source = heatclosure::test::writeFixture(temp);
     auto valid = heatclosure::loadModel(source, 0.5);
-    if(valid.alphaMin != 0.01 || valid.alphaMax != 6.0 || valid.gate.size() != 192 || valid.down.size() != 64)
-        throw std::runtime_error("model metadata mismatch");
-    bool mismatch = false;
-    try
+    if(valid.alphaMin != 0.01 || valid.alphaMax != 6.0 || valid.gate.size() != 192 || valid.up.size() != 192
+       || valid.down.size() != 64 || valid.inputDim != 3 || valid.width != 64
+       || valid.encoding != heatclosure::FeatureEncoding::raw)
+        throw std::runtime_error("v1 model metadata mismatch");
+
+    // v2: the same gated-SiLU contract with the Fourier-encoded 27-column input.
+    auto const v2Dir = temp / "v2";
+    auto const v2source = heatclosure::test::writeFixture(v2Dir, heatclosure::FeatureEncoding::fourier_xy_k0_5);
+    auto const v2 = heatclosure::loadModel(v2source, 0.5);
+    if(v2.inputDim != 27 || v2.width != 64 || v2.gate.size() != 27 * 64 || v2.up.size() != 27 * 64
+       || v2.down.size() != 64 || v2.encoding != heatclosure::FeatureEncoding::fourier_xy_k0_5)
+        throw std::runtime_error("v2 model metadata mismatch");
+    if(v2.alphaMin != 0.01 || v2.alphaMax != 6.0 || v2.beta != 0.5)
+        throw std::runtime_error("v2 model bounds mismatch");
     {
-        (void) heatclosure::loadModel(source, 0.6);
+        // Feature-order expansion for v2 must be the exact 27-name contract order.
+        auto const order = heatclosure::detail::expectedFeatureOrder(heatclosure::FeatureEncoding::fourier_xy_k0_5);
+        char const* const first[10]
+            = {"u", "x", "y", "sin1pi_x", "cos1pi_x", "sin1pi_y", "cos1pi_y", "sin2pi_x", "cos2pi_x", "sin2pi_y"};
+        if(order.size() != 27)
+            throw std::runtime_error("v2 feature count mismatch");
+        for(std::size_t i = 0; i < 10; ++i)
+            if(order[i] != first[i])
+                throw std::runtime_error("v2 feature order mismatch");
     }
-    catch(std::runtime_error const&)
+    auto const rejectV2 = [&](std::string const& text, std::string const& label, std::string const& expectedReason)
     {
-        mismatch = true;
+        std::ofstream meta(v2source.string() + ".metadata.json");
+        meta << text;
+        meta.close();
+        rejected(v2source, label, expectedReason);
+    };
+    auto const v2metadata = read(v2source.string() + ".metadata.json");
+    {
+        auto altered = v2metadata;
+        auto const pos = altered.find("fourier_xy_k0_5");
+        if(pos == std::string::npos)
+            throw std::runtime_error("test mutation target missing: v2 feature encoding");
+        altered.replace(pos, std::string("fourier_xy_k0_5").size(), "fourier_xy_k0_9");
+        rejectV2(altered, "v2 unknown feature encoding", "unsupported model metadata: feature_encoding");
     }
-    if(!mismatch)
-        throw std::runtime_error("beta mismatch accepted");
+    {
+        auto altered = v2metadata;
+        auto const pos = altered.find("\"format\": \"alpakaNN-heat-closure-f32-v2\"");
+        if(pos == std::string::npos)
+            throw std::runtime_error("test mutation target missing: v2 format");
+        altered.replace(
+            pos,
+            std::string("\"format\": \"alpakaNN-heat-closure-f32-v2\"").size(),
+            "\"format\": \"alpakaNN-heat-closure-f32-v3\"");
+        rejectV2(altered, "v2 unknown format", "unsupported model metadata: format");
+    }
+    {
+        auto altered = v2metadata;
+        auto const pos = altered.find("[\n      27,\n      64\n    ]");
+        if(pos == std::string::npos)
+            throw std::runtime_error("test mutation target missing: v2 shape");
+        altered.replace(pos, std::string("[\n      27,\n      64\n    ]").size(), "[\n      3,\n      64\n    ]");
+        rejectV2(altered, "v2 inconsistent shape", "unsupported weight shapes");
+    }
+    {
+        // A v1-sized payload declared as v2 must be rejected specifically on byte
+        // size. Metadata (name and checksum) must describe the wrong file under
+        // test so the failure cannot be misattributed to a checksum mismatch.
+        auto const wrongDir = temp / "v2-wrong-size";
+        std::filesystem::create_directories(wrongDir);
+        auto const wrongPayload = wrongDir / "weights.bin";
+        auto const small = heatclosure::test::fixtureWeights(heatclosure::FeatureEncoding::raw);
+        std::ofstream w(wrongPayload, std::ios::binary | std::ios::trunc);
+        w.write(reinterpret_cast<char const*>(small.data()), static_cast<std::streamsize>(small.size()));
+        w.close();
+        auto const wrongMeta = heatclosure::test::fixtureMetadata(
+            "weights.bin",
+            heatclosure::detail::sha256(small),
+            heatclosure::FeatureEncoding::fourier_xy_k0_5);
+        std::ofstream meta2(wrongPayload.string() + ".metadata.json", std::ios::trunc);
+        meta2 << wrongMeta;
+        meta2.close();
+        rejected(wrongPayload, "v2 weight byte-size mismatch", "model weight size mismatch");
+    }
+    {
+        // Checksum rejection is a separate case: correct v2 byte size, tampered
+        // metadata digest.
+        auto altered = v2metadata;
+        auto const pos = altered.find("\"weights_sha256\": \"");
+        if(pos == std::string::npos)
+            throw std::runtime_error("test mutation target missing: v2 checksum");
+        auto const begin = pos + std::string("\"weights_sha256\": \"").size();
+        auto const end = altered.find('"', begin);
+        altered.replace(begin, end - begin, "0000000000000000000000000000000000000000000000000000000000000000");
+        rejectV2(altered, "v2 weights checksum mismatch", "model weight checksum mismatch");
+    }
+    // Restore the valid v2 manifest for any later checks.
+    {
+        std::ofstream meta(v2source.string() + ".metadata.json");
+        meta << v2metadata;
+    }
+
+    // Beta mismatch must fail for the documented reason, for the v1 fixture, the
+    // v2 fixture, and for a v2 manifest declaring a different beta.
+    rejectedWithBeta(source, 0.6, "v1 beta mismatch", "invalid model bounds or beta mismatch");
+    rejectedWithBeta(v2source, 0.6, "v2 beta mismatch", "invalid model bounds or beta mismatch");
+    {
+        auto const v2betaPos = v2metadata.find("\"beta\": 0.5");
+        if(v2betaPos == std::string::npos)
+            throw std::runtime_error("test mutation target missing: v2 beta");
+        auto v2beta = v2metadata;
+        v2beta.replace(v2betaPos, std::string("\"beta\": 0.5").size(), "\"beta\": 0.6");
+        rejectV2(v2beta, "v2 declared beta 0.6", "invalid model bounds or beta mismatch");
+    }
+    // A syntactically valid but type-confused manifest (numeric feature_encoding)
+    // must produce the documented metadata error rather than bad_variant_access.
+    {
+        auto typeConfused = v2metadata;
+        auto const encPos = typeConfused.find("\"feature_encoding\": \"fourier_xy_k0_5\"");
+        if(encPos == std::string::npos)
+            throw std::runtime_error("test mutation target missing: v2 feature encoding type");
+        typeConfused.replace(
+            encPos,
+            std::string("\"feature_encoding\": \"fourier_xy_k0_5\"").size(),
+            "\"feature_encoding\": 1");
+        rejectV2(typeConfused, "type-confused feature_encoding", "malformed model JSON metadata");
+        auto typeConfusedFormat = v2metadata;
+        auto const fmtPos = typeConfusedFormat.find("\"format\": \"alpakaNN-heat-closure-f32-v2\"");
+        if(fmtPos == std::string::npos)
+            throw std::runtime_error("test mutation target missing: v2 format type");
+        typeConfusedFormat.replace(
+            fmtPos,
+            std::string("\"format\": \"alpakaNN-heat-closure-f32-v2\"").size(),
+            "\"format\": 1");
+        rejectV2(typeConfusedFormat, "type-confused format", "malformed model JSON metadata");
+    }
 
     auto original = read(source.string() + ".metadata.json");
     // Derive the declared checksum from the weights file actually under test rather
@@ -291,11 +410,37 @@ try
         "checksum metadata",
         "checksum mismatch");
     run(original.substr(0, original.size() / 2), "truncated JSON");
+    // Non-finite weights: a lone NaN with matching size, checksum and valid
+    // metadata must be rejected explicitly on finiteness.
+    {
+        auto nanDir = temp / "nan";
+        std::filesystem::create_directories(nanDir);
+        auto nanWeights = nanDir / "weights.bin";
+        auto nanBytes = heatclosure::test::fixtureWeights(heatclosure::FeatureEncoding::raw);
+        nanBytes[0] = 0x00;
+        nanBytes[1] = 0x00;
+        nanBytes[2] = 0xc0;
+        nanBytes[3] = 0x7f; // float32 quiet NaN 0x7fc00000, little-endian
+        {
+            std::ofstream nanFile(nanWeights, std::ios::binary | std::ios::trunc);
+            nanFile.write(
+                reinterpret_cast<char const*>(nanBytes.data()),
+                static_cast<std::streamsize>(nanBytes.size()));
+        }
+        {
+            std::ofstream nanMeta(nanWeights.string() + ".metadata.json", std::ios::trunc);
+            nanMeta << heatclosure::test::fixtureMetadata(
+                "weights.bin",
+                heatclosure::detail::sha256(nanBytes),
+                heatclosure::FeatureEncoding::raw);
+        }
+        rejected(nanWeights, "non-finite model weight", "non-finite model weight");
+    }
     auto bytes = read(weights);
     bytes[0] ^= 1;
     write(weights, bytes);
     write(metadata, original);
-    rejected(weights, "weights checksum mismatch");
+    rejected(weights, "weights checksum mismatch", "model weight checksum mismatch");
     std::filesystem::remove_all(temp);
     std::cout << "model loader checks passed\n";
 }
