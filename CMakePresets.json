@@ -12,7 +12,7 @@
         "binaryDir": "${sourceDir}/build/${presetName}",
         "cacheVariables": {
           "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-          "alpakaNN_BUILD_TESTS": "ON",
+          "alpakaNN_TESTS": "ON",
           "alpaka_TESTS": "OFF",
           "alpaka_EXAMPLES": "OFF",
           "alpaka_BENCHMARKS": "OFF",

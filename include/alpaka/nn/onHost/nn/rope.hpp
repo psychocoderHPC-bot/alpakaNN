@@ -46,6 +46,29 @@ namespace alpaka::nn::onHost::nn
         }
     } // namespace internal
 
+    /** @brief Apply rotary position embedding (RoPE) to one tensor.
+     *
+     * Rotates consecutive head-dimension pairs `(x[2p], x[2p+1])` using the cosine/sine tables:
+     * `out[2p] = x[2p] * cos - x[2p+1] * sin`, `out[2p+1] = x[2p] * sin + x[2p+1] * cos`. The token position is
+     * `positionOffset + tokenIndex`, where the token axis is axis 1 for `RopeLayout::BTHD` and axis 2 for
+     * `RopeLayout::BHTD`.
+     *
+     * @tparam T_Type Element type of the tensor and the tables.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input tensor of rank 3 or 4; the last axis is the head dimension and must be even.
+     * @param cosTable Cosine table of extents `(positions, headDim / 2)`.
+     * @param sinTable Sine table of extents `(positions, headDim / 2)`, matching @p cosTable.
+     * @param out Preallocated output with exactly the same extents as @p in. For in-place rotation use
+     *            `ropeInPlace`, which performs the aliasing safely.
+     * @param layout Layout of @p in and @p out (default `BTHD`).
+     * @param positionOffset First table position to use; the table must cover all requested positions.
+     *
+     * @throw std::invalid_argument if @p in and @p out differ in shape, the head dimension is odd, the tables do
+     *        not match, or the tables do not cover `positionOffset + tokens`.
+     * @note Asynchronous: the caller owns every view and must keep them alive and call
+     *       `alpaka::onHost::wait(queue)` before reading @p out.
+     */
     template<typename T_Type>
     void rope(
         auto& queue,
@@ -68,6 +91,26 @@ namespace alpaka::nn::onHost::nn
                 sinTable});
     }
 
+    /** @brief Apply RoPE to a query/key pair, writing separate outputs.
+     *
+     * Convenience overload that calls the single-tensor `rope` once for @p q -> @p outQ and once for @p k ->
+     * @p outK with the same tables, layout and offset. @p q and @p k may have different head counts.
+     *
+     * @tparam T_Type Element type of the tensors and the tables.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param q Query input tensor; last axis must be an even head dimension.
+     * @param k Key input tensor; last axis must be an even head dimension.
+     * @param cosTable Cosine table of extents `(positions, headDim / 2)`.
+     * @param sinTable Sine table of extents `(positions, headDim / 2)`.
+     * @param outQ Preallocated output with exactly the same extents as @p q.
+     * @param outK Preallocated output with exactly the same extents as @p k.
+     * @param layout Layout of all tensors (default `BTHD`).
+     * @param positionOffset First table position to use.
+     *
+     * @throw std::invalid_argument as described for the single-tensor overload.
+     * @note Asynchronous, caller-owned views (see the single-tensor overload).
+     */
     template<typename T_Type>
     void rope(
         auto& queue,
@@ -92,6 +135,17 @@ namespace alpaka::nn::onHost::nn
      * work has completed. Before consuming results on the host the caller must synchronize the queue, or extend the
      * lifetime of the involved views, in their own code as appropriate. The function's own internal scratch buffer is
      * kept alive internally.
+     *
+     * @tparam T_Type Element type of @p tensor and the tables.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param tensor Tensor to rotate in place; last axis must be an even head dimension.
+     * @param cosTable Cosine table of extents `(positions, headDim / 2)`.
+     * @param sinTable Sine table of extents `(positions, headDim / 2)`.
+     * @param layout Layout of @p tensor (default `BTHD`).
+     * @param positionOffset First table position to use; the table must cover all requested positions.
+     *
+     * @note Asynchronous and caller-owned: see the paragraph above.
      */
     template<typename T_Type>
     void ropeInPlace(
@@ -118,6 +172,16 @@ namespace alpaka::nn::onHost::nn
      * asynchronously; the caller must keep @p q, @p k, @p cosTable and @p sinTable alive and valid until the enqueued
      * work has completed, and must synchronize the queue, or extend the lifetime of those views, in their own code
      * before consuming results on the host. The function's own internal scratch buffers are kept alive internally.
+     *
+     * @tparam T_Type Element type of the tensors and the tables.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param q Query tensor rotated in place; last axis must be an even head dimension.
+     * @param k Key tensor rotated in place; last axis must be an even head dimension.
+     * @param cosTable Cosine table of extents `(positions, headDim / 2)`.
+     * @param sinTable Sine table of extents `(positions, headDim / 2)`.
+     * @param layout Layout of @p q and @p k (default `BTHD`).
+     * @param positionOffset First table position to use.
      */
     template<typename T_Type>
     void ropeInPlace(

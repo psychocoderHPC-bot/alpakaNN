@@ -22,6 +22,19 @@ namespace alpaka::nn::onHost
      * rejected by the vendor wrapper itself (``std::invalid_argument``), which is the contract here.
      *
      * Only ``float`` and ``double`` are supported; integer operands are intentionally not supported.
+     *
+     * @tparam T_Type Scalar type; must be ``float`` or ``double`` (defaults to ``float``).
+     * @param queue alpaka queue the work is enqueued on. The call is asynchronous with respect to the host.
+     * @param A Left operand, a row-major dense 2D view of extents ``(M, K)``.
+     * @param B Right operand, a row-major dense 2D view of extents ``(K, N)``.
+     * @param C Output, a preallocated row-major dense 2D view of extents ``(M, N)``. It is overwritten
+     *          (``beta == 0``) rather than accumulated.
+     *
+     * @throw std::invalid_argument if the vendor wrapper rejects an operand pitch or column stride.
+     *
+     * @note The operation is asynchronous and the caller owns every view. Keep @p A, @p B and @p C alive and valid
+     *       until the enqueued work completes, and call ``alpaka::onHost::wait(queue)`` (or ``C.keepAlive(queue)``)
+     *       before consuming @p C on the host.
      */
     template<typename T_Type = float>
     void gemm(auto& queue, auto const& A, auto const& B, auto& C)

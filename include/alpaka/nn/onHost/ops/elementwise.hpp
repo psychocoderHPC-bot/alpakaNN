@@ -254,12 +254,35 @@ namespace alpaka::nn::onHost::ops
         }
     } // namespace detail
 
+    /** @brief Fill a view with a constant value.
+     *
+     * @tparam T_Value Value type; must be assignable to the view element type.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor (for example the accelerator executor selected for @p queue).
+     * @param out View to write; every element is set to @p value.
+     * @param value Constant to write.
+     *
+     * @note Asynchronous: work is enqueued on @p queue, the caller owns @p out and must keep it alive and call
+     *       `alpaka::onHost::wait(queue)` (or `out.keepAlive(queue)`) before reading it back.
+     */
     template<typename T_Value>
     void fill(auto& queue, auto exec, alpaka::concepts::IMdSpan auto& out, T_Value value)
     {
         detail::enqueue(queue, exec, out.getExtents(), alpaka::KernelBundle{detail::FillKernel<T_Value>{value}, out});
     }
 
+    /** @brief Copy one view into another with identical extents.
+     *
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Source view; not modified.
+     * @param out Destination view; must have exactly the same extents as @p in.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     *
+     * @note Asynchronous: work is enqueued on @p queue, the caller owns both views and must keep them alive and
+     *       call `alpaka::onHost::wait(queue)` before reading @p out back.
+     */
     void copy(auto& queue, auto exec, alpaka::concepts::IMdSpan auto const& in, alpaka::concepts::IMdSpan auto& out)
     {
         detail::requireSameShape(in, out, "copy");
@@ -273,6 +296,19 @@ namespace alpaka::nn::onHost::ops
                 in});
     }
 
+    /** @brief Apply a caller-provided unary functor elementwise.
+     *
+     * @tparam T_Op Functor type callable as `op(value)` from the device.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view; not modified.
+     * @param out Output view; must have exactly the same extents as @p in.
+     * @param op Unary functor invoked as `op(in[idx])`.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     *
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Op>
     void unaryOp(
         auto& queue,
@@ -285,6 +321,20 @@ namespace alpaka::nn::onHost::ops
         detail::enqueue(queue, exec, out.getExtents(), alpaka::KernelBundle{detail::UnaryKernel<T_Op>{op}, out, in});
     }
 
+    /** @brief Apply a caller-provided binary functor elementwise.
+     *
+     * @tparam T_Op Functor type callable as `op(lhs, rhs)` from the device.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param lhs First input view; not modified.
+     * @param rhs Second input view; not modified.
+     * @param out Output view; must have the same extents as @p lhs and @p rhs.
+     * @param op Binary functor invoked as `op(lhs[idx], rhs[idx])`.
+     *
+     * @throw std::invalid_argument if any of the three shapes differ.
+     *
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Op>
     void binaryOp(
         auto& queue,
@@ -303,42 +353,128 @@ namespace alpaka::nn::onHost::ops
             alpaka::KernelBundle{detail::BinaryKernel<T_Op>{op}, out, lhs, rhs});
     }
 
+    /** @brief Elementwise addition `out = lhs + rhs`.
+     *
+     * @tparam T_Type Scalar type of the operation; must match the view value type.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param lhs First input view.
+     * @param rhs Second input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void add(auto& queue, auto exec, auto const& lhs, auto const& rhs, auto& out)
     {
         binaryOp(queue, exec, lhs, rhs, out, detail::AddOp<T_Type>{});
     }
 
+    /** @brief Elementwise subtraction `out = lhs - rhs`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param lhs Minuend input view.
+     * @param rhs Subtrahend input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void sub(auto& queue, auto exec, auto const& lhs, auto const& rhs, auto& out)
     {
         binaryOp(queue, exec, lhs, rhs, out, detail::SubOp<T_Type>{});
     }
 
+    /** @brief Elementwise multiplication `out = lhs * rhs`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param lhs First input view.
+     * @param rhs Second input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void mul(auto& queue, auto exec, auto const& lhs, auto const& rhs, auto& out)
     {
         binaryOp(queue, exec, lhs, rhs, out, detail::MulOp<T_Type>{});
     }
 
+    /** @brief Elementwise division `out = lhs / rhs`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param lhs Dividend input view.
+     * @param rhs Divisor input view; the caller must guarantee non-zero entries.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void div(auto& queue, auto exec, auto const& lhs, auto const& rhs, auto& out)
     {
         binaryOp(queue, exec, lhs, rhs, out, detail::DivOp<T_Type>{});
     }
 
+    /** @brief Multiply a view by a scalar: `out = in * scalar`.
+     *
+     * @tparam T_Type Scalar type.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param scalar Factor applied to every element.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void scale(auto& queue, auto exec, auto const& in, T_Type scalar, auto& out)
     {
         unaryOp(queue, exec, in, out, detail::ScaleOp<T_Type>{scalar});
     }
 
+    /** @brief BLAS-style `out = alpha * x + y`.
+     *
+     * @tparam T_Type Scalar type.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param alpha Scalar multiplier for @p x.
+     * @param x First input view.
+     * @param y Second input view; added unchanged.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void axpy(auto& queue, auto exec, T_Type alpha, auto const& x, auto const& y, auto& out)
     {
         binaryOp(queue, exec, x, y, out, detail::AxpyOp<T_Type>{alpha});
     }
 
+    /** @brief Add a per-last-axis bias vector to every row of a view: `out = input + bias`.
+     *
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param input Input view of rank >= 1.
+     * @param bias 1D bias view whose extent must equal the last axis of @p input; `bias[last]` is added to every
+     *             element with that last-axis coordinate.
+     * @param out Output view; must have the same extents as @p input.
+     *
+     * @throw std::invalid_argument if @p bias is not 1D, if its extent does not match the last axis, or if
+     *        @p input and @p out differ in shape.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     void biasAdd(
         auto& queue,
         auto exec,
@@ -359,6 +495,17 @@ namespace alpaka::nn::onHost::ops
                 bias});
     }
 
+    /** @brief Elementwise type conversion `out = static_cast<T_Out>(in)`.
+     *
+     * @tparam T_Out Destination element type.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view; identical extents required, element type may differ from @p in.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Out>
     void cast(auto& queue, auto exec, auto const& in, auto& out)
     {
@@ -367,48 +514,137 @@ namespace alpaka::nn::onHost::ops
         unaryOp(queue, exec, in, out, detail::CastOp<T_Out, InType>{});
     }
 
+    /** @brief Elementwise exponential `out = exp(in)`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void exp(auto& queue, auto exec, auto const& in, auto& out)
     {
         unaryOp(queue, exec, in, out, detail::ExpOp<T_Type>{});
     }
 
+    /** @brief Elementwise square root `out = sqrt(in)`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Non-negative input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void sqrt(auto& queue, auto exec, auto const& in, auto& out)
     {
         unaryOp(queue, exec, in, out, detail::SqrtOp<T_Type>{});
     }
 
+    /** @brief Elementwise reciprocal square root `out = 1 / sqrt(in)`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Positive input view; the caller must guard against zero.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void rsqrt(auto& queue, auto exec, auto const& in, auto& out)
     {
         unaryOp(queue, exec, in, out, detail::RsqrtOp<T_Type>{});
     }
 
+    /** @brief Elementwise rectified linear unit `out = max(in, 0)`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void relu(auto& queue, auto exec, auto const& in, auto& out)
     {
         unaryOp(queue, exec, in, out, detail::ReluOp<T_Type>{});
     }
 
+    /** @brief Elementwise logistic sigmoid `out = 1 / (1 + exp(-in))`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void sigmoid(auto& queue, auto exec, auto const& in, auto& out)
     {
         unaryOp(queue, exec, in, out, detail::SigmoidOp<T_Type>{});
     }
 
+    /** @brief Elementwise SiLU / swish `out = in * sigmoid(in)`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void silu(auto& queue, auto exec, auto const& in, auto& out)
     {
         unaryOp(queue, exec, in, out, detail::SiluOp<T_Type>{});
     }
 
+    /** @brief Elementwise exact GELU using the erf formulation: `0.5 * x * (1 + erf(x / sqrt(2)))`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void gelu(auto& queue, auto exec, auto const& in, auto& out)
     {
         unaryOp(queue, exec, in, out, detail::GeluOp<T_Type>{});
     }
 
+    /** @brief Elementwise SwiGLU gate: `out = lhs * sigmoid(lhs) * rhs`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param lhs Gate input view.
+     * @param rhs Value input view; multiplied by the gated term.
+     * @param out Output view; identical extents required.
+     *
+     * @throw std::invalid_argument if the shapes differ.
+     * @note Asynchronous, caller-owned views (see `fill`).
+     */
     template<typename T_Type>
     void swiglu(auto& queue, auto exec, auto const& lhs, auto const& rhs, auto& out)
     {
