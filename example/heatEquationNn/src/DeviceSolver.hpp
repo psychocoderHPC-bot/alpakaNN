@@ -257,6 +257,9 @@ namespace heatclosure
                    || model->beta != config.beta || model->alphaMin != config.alphaMin
                    || model->alphaMax != config.alphaMax)
                     throw std::invalid_argument("neural mode requires matching model metadata");
+                // A manually-constructed `Model` may declare dimensions that do not
+                // match its weight storage; reject before allocating or indexing.
+                detail::validateModelWeights(*model);
                 m_encoding = model->encoding;
                 m_inputDim = model->inputDim;
                 m_width = model->width;

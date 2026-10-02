@@ -497,6 +497,25 @@ namespace heatclosure
             return encoding == FeatureEncoding::fourier_xy_k0_5 ? 27u : 3u;
         }
 
+        /** Validate that a `Model`'s weight vectors match its declared dimensions.
+         *
+         * `Model` is a public aggregate, so it can be constructed manually with a
+         * `width`/`inputDim` that disagrees with the vector sizes. The device and
+         * host inference paths index `gate[i * width + j]` for `i < inputDim`,
+         * `j < width` (and `down[i]` for `i < width`) without re-checking, so a
+         * short vector would read out of bounds. Reject the mismatch here, before
+         * any allocation or indexing, with a documented `std::invalid_argument`.
+         */
+        inline void validateModelWeights(Model const& model)
+        {
+            if(model.inputDim == 0 || model.width == 0
+               || model.inputDim > std::numeric_limits<std::size_t>::max() / model.width)
+                throw std::invalid_argument("model dimensions are invalid");
+            auto const expected = model.inputDim * model.width;
+            if(model.gate.size() != expected || model.up.size() != expected || model.down.size() != model.width)
+                throw std::invalid_argument("model weight vectors do not match inputDim/width");
+        }
+
         /** Feature column names in contract order for a given encoding. */
         inline std::vector<std::string> expectedFeatureOrder(FeatureEncoding encoding)
         {

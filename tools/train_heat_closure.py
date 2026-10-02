@@ -100,6 +100,76 @@ def metadata(beta: float, variant: str = "raw", width: int = WIDTH, **extra) -> 
     return result
 
 
+def acceptance_report(metrics: dict, beta: float) -> dict:
+    """Summarize acceptance for the evaluated splits.
+
+    Targets match the tracked v2 manifest: MAE <= 0.05*alpha_max and
+    max_abs <= 0.20*alpha_max. Validation and the coordinate-held-out
+    ``clean_holdout`` split decide the verdict; ``test`` is informational.
+    """
+    targets = {"mae": 0.05 * alpha_max_for_beta(beta), "max_abs": 0.20 * alpha_max_for_beta(beta)}
+    splits = {}
+    decision_splits = ("validation", "clean_holdout")
+    for name, split in metrics.items():
+        if not isinstance(split, dict) or "mae" not in split or "max_abs" not in split:
+            continue
+        mae_pass = split["mae"] <= targets["mae"]
+        max_abs_pass = split["max_abs"] <= targets["max_abs"]
+        evaluated = name in decision_splits
+        splits[name] = {
+            "evaluated": evaluated,
+            "mae": split["mae"],
+            "max_abs": split["max_abs"],
+            "mse": split.get("mse"),
+            "mae_pass": mae_pass,
+            "max_abs_pass": max_abs_pass,
+            "pass": bool(mae_pass and max_abs_pass) if evaluated else None,
+        }
+    decided = [s for s in splits.values() if s["evaluated"]]
+    verdict = "PASS" if decided and all(s["pass"] for s in decided) else "FAIL"
+    return {
+        "basis": "MAE <= 0.05*alpha_max and max_abs <= 0.20*alpha_max on validation and clean holdout "
+                 "(test informational)",
+        "targets": targets,
+        "splits": splits,
+        "verdict": verdict,
+    }
+
+
+def trained_manifest(
+    beta: float,
+    variant: str,
+    metrics: dict,
+    weights_sha256: str,
+    training: dict,
+    weights_file: str,
+    history_file: str,
+) -> dict:
+    """Build the exported model manifest for a trained checkpoint.
+
+    Pure (no PyTorch) so the exported contract can be tested directly. The C++
+    loader selects the feature contract from ``format``/``feature_encoding`` and
+    validates ``weight_shapes``/``width``; the ``metrics``/``acceptance`` blocks
+    are informational evidence and do not affect loading.
+    """
+    result = metadata(
+        beta,
+        variant,
+        kind="trained_model",
+        weights_file=weights_file,
+        weights_sha256=weights_sha256,
+        training=training,
+        metrics=metrics,
+        history_file=history_file,
+    )
+    result["dtype"] = "float32"
+    if variant == "B":
+        result["feature_count"] = len(result["feature_order"])
+        result["bias_free"] = True
+        result["acceptance"] = acceptance_report(metrics, beta)
+    return result
+
+
 def encode_weights(gate, up, down, in_dim: int = 3, width: int = WIDTH) -> bytes:
     """Serialize nested [in,out] rows in fixed gate/up/down order."""
     chunks = []
@@ -255,15 +325,19 @@ def train(args) -> None:
     out=Path(args.output); out.parent.mkdir(parents=True,exist_ok=True)
     arrays=[p.detach().cpu().tolist() for p in params]
     out.write_bytes(encode_weights(*arrays, in_dim=in_dim, width=WIDTH))
-    m=metadata(args.beta, args.variant, kind="trained_model", weights_file=out.name,
-      weights_sha256=hashlib.sha256(out.read_bytes()).hexdigest(), training_csv_sha256=hashlib.sha256(Path(args.csv).read_bytes()).hexdigest(),
-      training={"seed":args.seed,"epochs_requested":args.epochs,"epochs_run":args.epochs,"best_epoch":best_epoch,"best_validation_mse":best,"learning_rate":args.lr,"batch_size":args.batch_size,"optimizer":"Adam","loss":"physical coefficient MSE","device":"cpu","duration_seconds":time.time()-start},
-      metrics={"validation":metrics(vaX,vaY),"validation_by_region":regional_metrics(vaX,vaY),
-               "spatial_eval":metrics(shiftX,shiftY),"spatial_eval_by_region":regional_metrics(shiftX,shiftY)},
-      history_file=out.with_suffix(".history.json").name)
+    # The coordinate-held-out `spatial_eval` split is recorded as `clean_holdout`
+    # so the acceptance block matches the tracked v2 manifest contract.
+    model_metrics={"validation":metrics(vaX,vaY),"validation_by_region":regional_metrics(vaX,vaY),
+                   "clean_holdout":metrics(shiftX,shiftY),"clean_holdout_by_region":regional_metrics(shiftX,shiftY)}
     if test_pair is not None:
-        m["metrics"]["test"] = metrics(*test_pair)
-        m["metrics"]["test_by_region"] = regional_metrics(*test_pair)
+        model_metrics["test"] = metrics(*test_pair)
+        model_metrics["test_by_region"] = regional_metrics(*test_pair)
+    m=trained_manifest(
+      args.beta, args.variant, model_metrics,
+      hashlib.sha256(out.read_bytes()).hexdigest(),
+      {"seed":args.seed,"epochs_requested":args.epochs,"epochs_run":args.epochs,"best_epoch":best_epoch,"best_validation_mse":best,"learning_rate":args.lr,"batch_size":args.batch_size,"optimizer":"Adam","loss":"physical coefficient MSE","device":"cpu","duration_seconds":time.time()-start},
+      out.name, out.with_suffix(".history.json").name)
+    m["training_csv_sha256"]=hashlib.sha256(Path(args.csv).read_bytes()).hexdigest()
     out.with_suffix(out.suffix+".metadata.json").write_text(json.dumps(m,indent=2,sort_keys=True)+"\n")
     out.with_suffix(".history.json").write_text(json.dumps(history,indent=2)+"\n")
     print(json.dumps(m["metrics"],indent=2)); print(f"best epoch: {best_epoch}; weights: {out}; duration {m['training']['duration_seconds']:.3f}s")

@@ -53,6 +53,40 @@ class TrainingToolsTest(unittest.TestCase):
         self.assertAlmostEqual(row[4], math.cos(math.pi*0.25))
         self.assertEqual(len(mod.encode_features(1.0, 0.25, 0.75, "raw")), 3)
 
+    def test_variant_b_manifest_carries_acceptance_and_feature_encoding(self):
+        # The tracked weights_v2.bin.metadata.json carries an acceptance block and
+        # the Fourier feature encoding; the committed exporter (`--variant B`) must
+        # produce the same contract, independently of PyTorch.
+        metrics={
+            "validation":{"count":3,"mse":0.2,"mae":0.1,"max_abs":0.4},
+            "clean_holdout":{"count":3,"mse":0.3,"mae":0.2,"max_abs":0.5},
+            "test":{"count":3,"mse":0.4,"mae":0.25,"max_abs":0.6},
+        }
+        m=mod.trained_manifest(.5,"B",metrics,"aa"*32,{"seed":0},"weights_v2.bin","h.json")
+        self.assertEqual(m["format"], "alpakaNN-heat-closure-f32-v2")
+        self.assertEqual(m["feature_encoding"], "fourier_xy_k0_5")
+        self.assertEqual(m["feature_count"], 27)
+        self.assertEqual(m["width"], mod.WIDTH)
+        self.assertEqual(m["weight_shapes"], [[27,mod.WIDTH],[27,mod.WIDTH],[mod.WIDTH,1]])
+        self.assertTrue(m["bias_free"])
+        self.assertIn("acceptance", m)
+        acc=m["acceptance"]
+        # targets: 0.05*6.0=0.30 MAE, 0.20*6.0=1.20 max_abs
+        self.assertAlmostEqual(acc["targets"]["mae"], 0.3)
+        self.assertAlmostEqual(acc["targets"]["max_abs"], 1.2)
+        self.assertTrue(acc["splits"]["validation"]["evaluated"])
+        self.assertTrue(acc["splits"]["clean_holdout"]["evaluated"])
+        self.assertFalse(acc["splits"]["test"]["evaluated"])
+        # All three splits pass the MAE target here; validation/holdout pass overall.
+        self.assertTrue(acc["splits"]["validation"]["pass"])
+        self.assertTrue(acc["splits"]["clean_holdout"]["pass"])
+        self.assertEqual(acc["verdict"], "PASS")
+        # A failing split flips the verdict.
+        bad=dict(metrics); bad["clean_holdout"]={"count":3,"mse":9.0,"mae":9.0,"max_abs":9.0}
+        self.assertEqual(
+            mod.trained_manifest(.5,"B",bad,"aa"*32,{},"w.bin","h.json")["acceptance"]["verdict"],
+            "FAIL")
+
     def test_small_csv_is_reproducible_and_spatial_split_disjoint(self):
         import argparse, csv
         args=argparse.Namespace(seed=5, grid_samples=16, temperature_levels=2,

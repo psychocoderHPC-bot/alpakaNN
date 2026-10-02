@@ -53,6 +53,9 @@ namespace heatclosure
         std::vector<std::array<double, 3>> const& points)
     {
         using namespace alpaka;
+        // Public `Model` weights may disagree with `inputDim`/`width`; reject before
+        // indexing `gate[i * width + j]` / `down[i]` out of bounds.
+        detail::validateModelWeights(model);
         auto const inputDim = static_cast<uint32_t>(model.inputDim);
         auto const width = static_cast<uint32_t>(model.width);
         auto const batch = static_cast<uint32_t>(points.size());

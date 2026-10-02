@@ -479,6 +479,72 @@ try
                   << '\n';
     }
 
+    // A public aggregate `Model` can be built by hand with vectors shorter than
+    // `inputDim*width` / `width`. Both the device solver and the host inference
+    // helper index those vectors unchecked, so both entry points must reject the
+    // mismatch instead of reading out of bounds.
+    {
+        heatclosure::Model shortModel = model;
+        shortModel.gate.pop_back();
+        heatclosure::Config shortConfig = c;
+        shortConfig.alphaMin = shortModel.alphaMin;
+        shortConfig.alphaMax = shortModel.alphaMax;
+        bool solverRejected = false;
+        try
+        {
+            heatclosure::DeviceSolver(
+                queue,
+                device,
+                shortConfig,
+                heatclosure::CoefficientMode::neural,
+                initial,
+                &shortModel);
+        }
+        catch(std::invalid_argument const&)
+        {
+            solverRejected = true;
+        }
+        require(solverRejected, "DeviceSolver accepted a Model with a short gate vector");
+
+        bool inferRejected = false;
+        std::vector<std::array<double, 3>> probePoints{{0.1, 0.5, 0.5}};
+        try
+        {
+            (void) heatclosure::infer(queue, alpaka::exec::cpuSerial, device, shortModel, probePoints);
+        }
+        catch(std::invalid_argument const&)
+        {
+            inferRejected = true;
+        }
+        require(inferRejected, "infer accepted a Model with a short gate vector");
+
+        // Short `up` and `down` must be rejected by the same guard.
+        heatclosure::Model shortUp = model;
+        shortUp.up.pop_back();
+        heatclosure::Model shortDown = model;
+        shortDown.down.pop_back();
+        bool upRejected = false, downRejected = false;
+        try
+        {
+            (void) heatclosure::infer(queue, alpaka::exec::cpuSerial, device, shortUp, probePoints);
+        }
+        catch(std::invalid_argument const&)
+        {
+            upRejected = true;
+        }
+        try
+        {
+            (void) heatclosure::infer(queue, alpaka::exec::cpuSerial, device, shortDown, probePoints);
+        }
+        catch(std::invalid_argument const&)
+        {
+            downRejected = true;
+        }
+        require(upRejected, "infer accepted a Model with a short up vector");
+        require(downRejected, "infer accepted a Model with a short down vector");
+        std::cout << "model_weight_shape_rejection gate=ok up=ok down=ok\n";
+    }
+
     // Same-grid nn-vs-preset final-field comparison from an identical zero start
     // (presetState/nnState both consumed the same number of steps at the same dt).
     {
