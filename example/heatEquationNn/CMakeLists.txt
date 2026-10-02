@@ -7,16 +7,22 @@ if(BUILD_TESTING)
     add_test(NAME heatEquationNn_strict_solver COMMAND heatEquationNn_solver_test)
     add_executable(heatEquationNn_device_solver_test test/device_solver_test.cpp)
     target_compile_features(heatEquationNn_device_solver_test PRIVATE cxx_std_20)
-    # alpaka_finalize copies sources into the build tree for HIP/CUDA. Use a target
-    # include directory instead of `../src/...` so the header lookup survives the copy.
-    target_include_directories(heatEquationNn_device_solver_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # alpaka_finalize copies sources into the build tree for HIP/CUDA. Use target
+    # include directories instead of `../src/...` / `ModelFixture.hpp` so the header
+    # lookup survives the copy.
+    target_include_directories(
+        heatEquationNn_device_solver_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/test
+    )
     target_link_libraries(heatEquationNn_device_solver_test PRIVATE alpaka::nn alpaka::alpaka)
+    # HEAT_CLOSURE_MODEL_DIR only names the optional real checkpoint location; the
+    # test builds a fixture when no trained weights.bin is present, so configure
+    # and test do not require the (intentionally uncommitted) binary.
     target_compile_definitions(
         heatEquationNn_device_solver_test
         PRIVATE
             HEAT_CLOSURE_MODEL_DIR="${PROJECT_SOURCE_DIR}/models/heat_closure"
             HEAT_CLOSURE_EXAMPLE_BIN="$<TARGET_FILE:heatEquationNn>"
-            HEAT_CLOSURE_TEST_TMP_DIR="$<TARGET_FILE_DIR:heatEquationNn_device_solver_test>"
     )
     # The CLI export/timing checks below execute the example binary, so it must be built first.
     add_dependencies(heatEquationNn_device_solver_test heatEquationNn)
@@ -38,9 +44,5 @@ endif()
 if(BUILD_TESTING)
     add_executable(heatEquationNn_model_loader_test test/model_loader_test.cpp)
     target_compile_features(heatEquationNn_model_loader_test PRIVATE cxx_std_20)
-    target_compile_definitions(
-        heatEquationNn_model_loader_test
-        PRIVATE HEAT_CLOSURE_MODEL_DIR="${PROJECT_SOURCE_DIR}/models/heat_closure"
-    )
     add_test(NAME heatEquationNn_model_loader COMMAND heatEquationNn_model_loader_test)
 endif()

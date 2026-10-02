@@ -6,6 +6,12 @@
 /docs/doxygen_dev
 /docs/cheatsheet/cheatsheet.pdf
 /models
+# Trained heat-closure outputs are intentionally not committed (retrain with
+# tools/train_heat_closure.py). Only the small weights.bin.metadata.json manifest
+# is tracked; force-add it if it ever becomes untracked.
+/models/heat_closure/weights.bin
+/models/heat_closure/weights.bin.inference_parity.csv
+/models/heat_closure/weights.history.json
 
 **/build*/
 

@@ -24,9 +24,13 @@ closure.
 The **primary** matrix (all backends) used model `f075cffd…`, the weights present
 at run time; the retrained checkpoint `b3a5f955…` was not yet committed into the
 matrix worktree. Because the numbers differ, both are reported. The
-**final model** `b3a5f955…` is what `models/heat_closure/` now ships; its
-same-grid and same-state numbers are the supplementary host-only run in
-`summary.json` (`field_t2_final_model`, `coefficient_t2_final_model`).
+**final model** `b3a5f955…` is the retrained checkpoint whose metrics the tracked
+`models/heat_closure/weights.bin.metadata.json` documents; its same-grid and
+same-state numbers are the supplementary host-only run in `summary.json`
+(`field_t2_final_model`, `coefficient_t2_final_model`). The binary itself is
+**intentionally not committed** — regenerate it via `tools/train_heat_closure.py`
+(see `example/heatEquationNn/README.md` section 2); the manifest records
+`weights_sha256` so a regenerated model can be compared/detected.
 
 ## 7.1 Solver checks — PASS
 
@@ -207,7 +211,9 @@ All under `/tmp/alpakaNN-results/nhc-20261001/`:
 - `T12/SUMMARY.md`, `T12/{solver,device-solver,model-loader}-stdout.log` —
   regression-test evidence.
 - `models/heat_closure/weights.bin.metadata.json` (in the worktree) —
-  acceptance FAIL block.
+  acceptance FAIL block and the `weights_sha256` of the trained checkpoint. The
+  binary `weights.bin` is **not committed**; regenerate it via
+  `tools/train_heat_closure.py` (it stays untracked by `.gitignore`).
 - `T6/figures/`, `T6/figures/manifest.json`, `T6/render.log` — figures.
 - `T7/heat_closure_demo.mp4`, `T7/logs/ffprobe_final.txt`,
   `T7/inspection/findings.json` — video.

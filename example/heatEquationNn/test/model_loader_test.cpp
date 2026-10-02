@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-#include "../src/ModelLoader.hpp"
+#include "ModelFixture.hpp"
 
 #include <chrono>
 #include <clocale>
@@ -108,7 +108,13 @@ namespace
 int main()
 try
 {
-    auto source = std::filesystem::path(HEAT_CLOSURE_MODEL_DIR) / "weights.bin";
+    // The trained checkpoint is intentionally not committed. Build a deterministic
+    // valid fixture here instead of requiring models/heat_closure/weights.bin.
+    auto temp = std::filesystem::temp_directory_path()
+                / ("heat-model-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(temp);
+    auto weights = temp / "weights.bin", metadata = std::filesystem::path(weights.string() + ".metadata.json");
+    auto source = heatclosure::test::writeFixture(temp);
     auto valid = heatclosure::loadModel(source, 0.5);
     if(valid.alphaMin != 0.01 || valid.alphaMax != 6.0 || valid.gate.size() != 192 || valid.down.size() != 64)
         throw std::runtime_error("model metadata mismatch");
@@ -124,11 +130,6 @@ try
     if(!mismatch)
         throw std::runtime_error("beta mismatch accepted");
 
-    auto temp = std::filesystem::temp_directory_path()
-                / ("heat-model-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directories(temp);
-    auto weights = temp / "weights.bin", metadata = std::filesystem::path(weights.string() + ".metadata.json");
-    std::filesystem::copy_file(source, weights);
     auto original = read(source.string() + ".metadata.json");
     // Derive the declared checksum from the weights file actually under test rather
     // than hardcoding a revision-specific digest. This keeps the mutation-rejection

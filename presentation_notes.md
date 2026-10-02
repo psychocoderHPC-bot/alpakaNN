@@ -21,8 +21,15 @@ network is interesting only where the physical closure is genuinely expensive.
 - Video inspection: `/tmp/alpakaNN-results/nhc-20261001/T7/inspection/`
   (`contact_sheet.png`, `findings.json`, OCR samples).
 - Source branch: `device-resident-runtime`; matrix commit
-  `4cb3ac246f6c673a889460612c4e1da67958f485`; installed model sha256
-  `b3a5f955482cef375ddef1995a9233c3c88bd96fe5748ca0d4f8ad15d572fa79`.
+  `4cb3ac246f6c673a889460612c4e1da67958f485`; trained-checkpoint sha256
+  `b3a5f955482cef375ddef1995a9233c3c88bd96fe5748ca0d4f8ad15d572fa79`
+  (documented in `models/heat_closure/weights.bin.metadata.json`).
+- The model binary itself is **intentionally not committed**; regenerate it with
+  `python3 tools/train_heat_closure.py dataset --output /tmp/heat_closure.csv`
+  and `python3 tools/train_heat_closure.py train --csv /tmp/heat_closure.csv
+  --output models/heat_closure/weights.bin` before a run that needs the trained
+  checkpoint. The recorded numbers below were measured with that checkpoint and
+  are unchanged by the untracking.
 
 ## Five-minute outline (Section 11)
 

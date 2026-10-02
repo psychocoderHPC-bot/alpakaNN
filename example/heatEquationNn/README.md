@@ -12,6 +12,16 @@ The learned model in `models/heat_closure/` is a **demonstrator, not a validated
 accurate closure**: the training pipeline's own acceptance verdict is FAIL (see
 [Model contract](#model-contract) and `../../docs/heat_closure_report.md`).
 
+The trained binary `models/heat_closure/weights.bin` is **intentionally not
+committed** (the operator decision is "do not check in the model binary; everyone
+can retrain it"). Only the small documentation manifest
+`models/heat_closure/weights.bin.metadata.json` is tracked. The C++ tests and
+this example build and pass on a fresh checkout without any pre-existing model:
+tests generate a deterministic in-test fixture, and `--material nn` runs whenever
+you pass a retrained `--weights FILE`. See
+[section 2](#2-train-or-regenerate-the-model-external-pytorch) for the exact
+retrain commands.
+
 Everything below was verified in the `device-resident-runtime` worktree; each
 command is replayable verbatim from the repository root.
 
@@ -45,6 +55,15 @@ The executable is written to
 
 ## 2. Train or regenerate the model (external PyTorch)
 
+**The model binary is not committed.** `models/heat_closure/weights.bin` (and the
+generated `weights.bin.inference_parity.csv` / `weights.history.json`) are
+`.gitignore`d and absent from a fresh checkout; regenerate them with
+`tools/train_heat_closure.py` before running an NN model-quality comparison that
+needs the trained checkpoint. The tests do not need it (they build a fixture),
+and `--material nn` only needs whatever `--weights FILE` you pass. Committing a
+regenerated binary is not required; if you deliberately want to track one, use
+`git add -f models/heat_closure/weights.bin`.
+
 Training is **outside** alpakaNN and is not part of the C++ build. The tool is
 `tools/train_heat_closure.py` (dataset generation and metadata/serialization do
 not require PyTorch; only `train` does).
@@ -71,25 +90,27 @@ python3 -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2
 Verify what you have (`python3 -c "import torch; print(torch.__version__)"`)
 before training; any different build will change the reported device label.
 
-Generate a dataset and train the exact gated-SiLU model (defaults reproduce the
-shipped architecture; the shipped checkpoint was fine-tuned with a longer,
-region-weighted schedule, see `weights.bin.metadata.json`):
+Generate a dataset and train the gated-SiLU model (defaults reproduce the
+architecture the tracked `weights.bin.metadata.json` documents; the recorded
+checkpoint was fine-tuned with a longer, region-weighted schedule, see that
+manifest). The `train` subcommand runs on CPU (the recorded checkpoint was
+fine-tuned on a ROCm GPU out-of-band; the C++ example does not care which device
+trained it). This is exactly how to regenerate the uncommitted binary:
 
 ```sh
 python3 tools/train_heat_closure.py dataset --output /tmp/heat_closure.csv
 python3 tools/train_heat_closure.py train \
   --csv /tmp/heat_closure.csv \
   --output models/heat_closure/weights.bin \
-  --device cpu --seed 0 --epochs 200 --batch-size 4096 --lr 1e-3
+  --seed 0 --epochs 200 --batch-size 4096 --lr 1e-3
 ```
 
-`--device cuda` uses CUDA/HIP when PyTorch can see it; `--device cpu` is always
-available. The exporter writes `weights.bin` (float32, little-endian, row-major
-`[in,out]`, `gate`/`up`/`down` concatenated), `weights.bin.metadata.json` and
-`weights.history.json`, plus a fixed-input parity CSV. After retraining, the
-runtime loader accepts the model only if the metadata contract matches; a
-different `weights.bin` also requires the checksum in the metadata and the test
-fixtures to be regenerated together.
+The exporter writes `weights.bin` (float32, little-endian, row-major `[in,out]`,
+`gate`/`up`/`down` concatenated), `weights.bin.metadata.json` and
+`weights.history.json`, plus a fixed-input parity CSV. All of these except the
+metadata manifest are `.gitignore`d so a retrain stays untracked. After
+retraining, the runtime loader accepts the model only if the metadata contract
+matches; a different `weights.bin` also requires the checksum in the metadata.
 
 ## 3. Run
 
@@ -221,7 +242,8 @@ install because no CUDA/level_zero UR adapter ships with it. See
 ## 4. Model contract
 
 A runtime model is a companion pair `weights.bin` + `weights.bin.metadata.json`.
-The loader in `src/ModelLoader.hpp` accepts only:
+Only the metadata manifest is tracked here; supply or regenerate the binary (see
+section 2). The loader in `src/ModelLoader.hpp` accepts only:
 
 - `format = "alpakaNN-heat-closure-f32-v1"`, `kind = "trained_model"`,
   `architecture = "gated_silu_bias_free_v1"`, `dtype = "float32"`.

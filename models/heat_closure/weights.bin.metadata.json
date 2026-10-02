@@ -1,4 +1,5 @@
 {
+  "_note": "Documentation manifest for the trained heat-closure demonstrator. The weights.bin binary, its inference_parity CSV and weights.history.json are intentionally NOT committed (they are large/regenerable); regenerate them with tools/train_heat_closure.py. weights_sha256 and the inference_parity block below describe the historical checkpoint that produced these metrics, not any binary in this tree.",
   "acceptance": {
     "basis": "Sections 6/7.4: MAE <= 0.05*alpha_max, max_abs <= 0.20*alpha_max",
     "pass": false,
