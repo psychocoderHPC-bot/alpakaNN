@@ -85,6 +85,14 @@ namespace alpaka::nn::onHost::nn
         rope<T_Type>(queue, exec, k, cosTable, sinTable, outK, layout, positionOffset);
     }
 
+    /** @brief Apply rotary position embedding in place.
+     *
+     * The work is enqueued on @p queue and may complete asynchronously. The caller is responsible for the lifetime of
+     * every view passed in (@p tensor, @p cosTable, @p sinTable): they must stay alive and valid until the enqueued
+     * work has completed. Before consuming results on the host the caller must synchronize the queue, or extend the
+     * lifetime of the involved views, in their own code as appropriate. The function's own internal scratch buffer is
+     * kept alive internally.
+     */
     template<typename T_Type>
     void ropeInPlace(
         auto& queue,
@@ -100,9 +108,17 @@ namespace alpaka::nn::onHost::nn
             tensor.getExtents());
         rope<T_Type>(queue, exec, tensor, cosTable, sinTable, tmp, layout, positionOffset);
         alpaka::nn::onHost::ops::copy(queue, exec, tmp, tensor);
-        alpaka::onHost::wait(queue);
+        // keep the internal temporary alive until the enqueued rope/copy ops have completed
+        tmp.keepAlive(queue);
     }
 
+    /** @brief Apply rotary position embedding in place to a query/key pair.
+     *
+     * Delegates to the single-tensor overload for @p q and @p k. The work is enqueued on @p queue and may complete
+     * asynchronously; the caller must keep @p q, @p k, @p cosTable and @p sinTable alive and valid until the enqueued
+     * work has completed, and must synchronize the queue, or extend the lifetime of those views, in their own code
+     * before consuming results on the host. The function's own internal scratch buffers are kept alive internally.
+     */
     template<typename T_Type>
     void ropeInPlace(
         auto& queue,
