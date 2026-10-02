@@ -38,13 +38,44 @@ namespace
         auto devUp = alpaka::onHost::allocLike(device, up);
         auto devDown = alpaka::onHost::allocLike(device, down);
         auto devOut = alpaka::onHost::allocLike(device, output);
+        auto devOutWorkspace = alpaka::onHost::allocLike(device, output);
+        auto gateWorkspace = alpaka::onHost::alloc<T_Type>(device, alpaka::Vec{1u, 6u});
+        auto upWorkspace = alpaka::onHost::alloc<T_Type>(device, alpaka::Vec{1u, 6u});
+        auto hiddenWorkspace = alpaka::onHost::alloc<T_Type>(device, alpaka::Vec{1u, 6u});
         alpaka::onHost::memcpy(queue, devInput, input);
         alpaka::onHost::memcpy(queue, devGate, gate);
         alpaka::onHost::memcpy(queue, devUp, up);
         alpaka::onHost::memcpy(queue, devDown, down);
         alpaka::nn::onHost::nn::mlp<T_Type>(queue, exec, devInput, devGate, devUp, devDown, devOut);
-        alpaka::onHost::memcpy(queue, output, devOut);
+        auto legacyOutput = alpaka::onHost::allocHost<T_Type>(alpaka::Vec{1u, 4u});
+        alpaka::onHost::memcpy(queue, legacyOutput, devOut);
+        alpaka::nn::onHost::nn::mlp<T_Type>(
+            queue,
+            exec,
+            devInput,
+            devGate,
+            devUp,
+            devDown,
+            gateWorkspace,
+            upWorkspace,
+            hiddenWorkspace,
+            devOutWorkspace);
+        // Queue a dependent read immediately; synchronization is the caller's responsibility.
+        alpaka::onHost::memcpy(queue, output, devOutWorkspace);
         alpaka::onHost::wait(queue);
+        auto invalidWorkspace = alpaka::onHost::alloc<T_Type>(device, alpaka::Vec{1u, 5u});
+        CHECK_THROWS(
+            alpaka::nn::onHost::nn::mlp<T_Type>(
+                queue,
+                exec,
+                devInput,
+                devGate,
+                devUp,
+                devDown,
+                invalidWorkspace,
+                upWorkspace,
+                hiddenWorkspace,
+                devOutWorkspace));
 
         T_Type hidden[6]{};
         for(uint32_t col = 0u; col < 6u; ++col)
@@ -64,6 +95,7 @@ namespace
             for(uint32_t k = 0u; k < 6u; ++k)
                 expected += hidden[k] * down[alpaka::Vec{k, col}];
             alpaka::nn::test::checkValue(output[alpaka::Vec{0u, col}], expected);
+            alpaka::nn::test::checkValue(output[alpaka::Vec{0u, col}], legacyOutput[alpaka::Vec{0u, col}]);
         }
     }
 } // namespace

@@ -6,6 +6,16 @@
 /docs/doxygen_dev
 /docs/cheatsheet/cheatsheet.pdf
 /models
+# Trained heat-closure outputs are intentionally not committed (retrain with
+# tools/train_heat_closure.py). Only the small weights*.bin.metadata.json
+# manifests and models/heat_closure/README.md are tracked; force-add them if
+# they ever become untracked.
+/models/heat_closure/weights.bin
+/models/heat_closure/weights.bin.inference_parity.csv
+/models/heat_closure/weights.history.json
+/models/heat_closure/weights_v2.bin
+/models/heat_closure/weights_v2.bin.inference_parity.csv
+/models/heat_closure/weights_v2.history.json
 
 **/build*/
 
@@ -87,3 +97,13 @@ env*/
 
 # tmp files
 alpaka3_inference_todo.md
+
+# generated heat-closure run outputs (large CSV/PNG/MP4/logs/summaries); curated manifests stay tracked
+/results/heat_closure/**/*.csv
+/results/heat_closure/**/*.log
+/results/heat_closure/**/*.nohup
+/results/heat_closure/**/*.png
+/results/heat_closure/**/*.mp4
+/results/heat_closure/**/summary.json
+/results/heat_closure/**/summary.md
+/results/heat_closure/**/README.md

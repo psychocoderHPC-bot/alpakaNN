@@ -1,0 +1,292 @@
+{
+  "_note": "Documentation manifest for the trained heat-closure demonstrator. The weights.bin binary, its inference_parity CSV and weights.history.json are intentionally NOT committed (they are large/regenerable); regenerate them with tools/train_heat_closure.py. weights_sha256 and the inference_parity block below describe the historical checkpoint that produced these metrics, not any binary in this tree.",
+  "acceptance": {
+    "basis": "Sections 6/7.4: MAE <= 0.05*alpha_max, max_abs <= 0.20*alpha_max",
+    "pass": false,
+    "splits": {
+      "clean_holdout": {
+        "evaluated": true,
+        "mae": 0.45216333866119385,
+        "mae_pass": false,
+        "max_abs": 4.81383752822876,
+        "max_abs_pass": false,
+        "pass": false
+      },
+      "validation": {
+        "evaluated": true,
+        "mae": 0.4526884853839874,
+        "mae_pass": false,
+        "max_abs": 4.418759822845459,
+        "max_abs_pass": false,
+        "pass": false
+      }
+    },
+    "targets": {
+      "mae": 0.30000000000000004,
+      "max_abs": 1.2000000000000002
+    },
+    "verdict": "FAIL"
+  },
+  "alpha_max": 6.0,
+  "alpha_min": 0.01,
+  "architecture": "gated_silu_bias_free_v1",
+  "beta": 0.5,
+  "beta_mismatch_policy": "reject",
+  "clean_holdout_csv_sha256": "8d94776b0032f792db5e7c9ecf1f2feae56871e4bf28f0eb9b66e9624ba4163f",
+  "coordinate_domain": [
+    0.0,
+    1.0
+  ],
+  "dtype": "float32",
+  "feature_order": [
+    "u",
+    "x",
+    "y"
+  ],
+  "format": "alpakaNN-heat-closure-f32-v1",
+  "history_file": "weights.history.json",
+  "inference_parity": [
+    {
+      "alpha_predicted": 0.22202707827091217,
+      "u": 0.0,
+      "x": 0.35,
+      "y": 0.5
+    },
+    {
+      "alpha_predicted": 0.3403348922729492,
+      "u": 1.0,
+      "x": 0.35,
+      "y": 0.5
+    },
+    {
+      "alpha_predicted": 2.1044063568115234,
+      "u": 0.5,
+      "x": 0.5,
+      "y": 0.5
+    },
+    {
+      "alpha_predicted": 1.4710369110107422,
+      "u": 0.0,
+      "x": 0.5,
+      "y": 0.5
+    },
+    {
+      "alpha_predicted": 2.671415328979492,
+      "u": 1.0,
+      "x": 0.5,
+      "y": 0.5
+    },
+    {
+      "alpha_predicted": 0.6882094740867615,
+      "u": 0.5,
+      "x": 0.35,
+      "y": 0.67
+    },
+    {
+      "alpha_predicted": 0.7783388495445251,
+      "u": 0.0,
+      "x": 0.8,
+      "y": 0.3
+    },
+    {
+      "alpha_predicted": 1.0226209163665771,
+      "u": 1.0,
+      "x": 0.8,
+      "y": 0.3333333333333333
+    },
+    {
+      "alpha_predicted": 0.5347310900688171,
+      "u": 0.3,
+      "x": 0.5,
+      "y": 0.16666666666666666
+    },
+    {
+      "alpha_predicted": 2.640883445739746,
+      "u": 0.5,
+      "x": 0.5,
+      "y": 0.4499
+    },
+    {
+      "alpha_predicted": 2.6397719383239746,
+      "u": 0.5,
+      "x": 0.5,
+      "y": 0.4501
+    },
+    {
+      "alpha_predicted": 2.4470295906066895,
+      "u": 0.5,
+      "x": 0.6501,
+      "y": 0.5
+    },
+    {
+      "alpha_predicted": 2.449800491333008,
+      "u": 0.5,
+      "x": 0.6499,
+      "y": 0.5
+    }
+  ],
+  "kind": "trained_model",
+  "material_formula": "base(x,y) * (1 + beta*u); inclusion if r2 < 0.12^2 => 0.02; else conductor if abs(y-0.5)<0.05 and 0.45<x<0.65 => 4.0; else 0.5+0.4*H(sin(6*pi*y)), H(z)=1 iff z>=0",
+  "metrics": {
+    "clean_holdout": {
+      "count": 77056,
+      "mae": 0.45216333866119385,
+      "max_abs": 4.81383752822876,
+      "mse": 0.5524719953536987
+    },
+    "clean_holdout_balanced_region_mse": 1.9321329593658447,
+    "clean_holdout_by_region": {
+      "background_low": {
+        "count": 33140,
+        "mae": 0.2501175105571747,
+        "max_abs": 2.7734315395355225,
+        "mse": 0.15325899422168732
+      },
+      "conductor": {
+        "count": 3455,
+        "mae": 2.511813163757324,
+        "max_abs": 4.81383752822876,
+        "mse": 6.621016025543213
+      },
+      "inclusion": {
+        "count": 5364,
+        "mae": 0.6315949559211731,
+        "max_abs": 2.1890034675598145,
+        "mse": 0.6348124742507935
+      },
+      "stripe_high": {
+        "count": 35097,
+        "mae": 0.4127649962902069,
+        "max_abs": 2.1691908836364746,
+        "mse": 0.31944432854652405
+      }
+    },
+    "spatial_eval": {
+      "count": 6678,
+      "mae": 0.3362903594970703,
+      "max_abs": 1.2519166469573975,
+      "mse": 0.19742213189601898
+    },
+    "spatial_eval_balanced_region_mse": 0.19710063934326172,
+    "spatial_eval_by_region": {
+      "background_low": {
+        "count": 3331,
+        "mae": 0.1982463300228119,
+        "max_abs": 0.7918727397918701,
+        "mse": 0.06291547417640686
+      },
+      "stripe_high": {
+        "count": 3347,
+        "mae": 0.473674476146698,
+        "max_abs": 1.2519166469573975,
+        "mse": 0.3312857747077942
+      }
+    },
+    "test": {
+      "count": 7103,
+      "mae": 0.46727922558784485,
+      "max_abs": 4.490024089813232,
+      "mse": 0.5979156494140625
+    },
+    "test_balanced_region_mse": 1.975308895111084,
+    "test_by_region": {
+      "background_low": {
+        "count": 3017,
+        "mae": 0.26281705498695374,
+        "max_abs": 2.5886025428771973,
+        "mse": 0.17322790622711182
+      },
+      "conductor": {
+        "count": 352,
+        "mae": 2.5446159839630127,
+        "max_abs": 4.490024089813232,
+        "mse": 6.771555423736572
+      },
+      "inclusion": {
+        "count": 521,
+        "mae": 0.635280966758728,
+        "max_abs": 2.082202911376953,
+        "mse": 0.6435009837150574
+      },
+      "stripe_high": {
+        "count": 3213,
+        "mae": 0.4044440984725952,
+        "max_abs": 2.1512999534606934,
+        "mse": 0.312951922416687
+      }
+    },
+    "validation": {
+      "count": 6941,
+      "mae": 0.4526884853839874,
+      "max_abs": 4.418759822845459,
+      "mse": 0.549512505531311
+    },
+    "validation_balanced_region_mse": 1.8794084787368774,
+    "validation_by_region": {
+      "background_low": {
+        "count": 2913,
+        "mae": 0.2541312575340271,
+        "max_abs": 2.7359859943389893,
+        "mse": 0.1581278294324875
+      },
+      "conductor": {
+        "count": 308,
+        "mae": 2.472026824951172,
+        "max_abs": 4.418759822845459,
+        "mse": 6.367003440856934
+      },
+      "inclusion": {
+        "count": 528,
+        "mae": 0.6397271752357483,
+        "max_abs": 2.18721866607666,
+        "mse": 0.6665030121803284
+      },
+      "stripe_high": {
+        "count": 3192,
+        "mae": 0.4081033766269684,
+        "max_abs": 2.15150785446167,
+        "mse": 0.32599908113479614
+      }
+    }
+  },
+  "output": "alpha_min + (alpha_max - alpha_min) * sigmoid(z)",
+  "temperature_domain": [
+    0.0,
+    1.0
+  ],
+  "training": {
+    "batch_size": 4096,
+    "best_epoch": 29925,
+    "best_validation_selection_score": 0.549512505531311,
+    "device": "cuda:AMD Radeon RX 7900 XTX",
+    "duration_seconds": 763.6340701580048,
+    "epochs_requested": 30000,
+    "epochs_run": 30000,
+    "initial_weights": "out/weights_phys8k.bin",
+    "initial_weights_sha256": "5d3bf3f323dda1d83b066c9f538d02957fefb4f5a9135e7ab0e6d1ae29b5ca50",
+    "learning_rate": 0.0005,
+    "loss": "physical_mse",
+    "optimizer": "Adam",
+    "region_loss_weight": 0.2,
+    "seed": 0
+  },
+  "training_csv_sha256": "dfaf6994c19cac6de27c89876278ff72ab52bf1c38fd31d56d32e64dd3a0d54d",
+  "weight_layout": "row-major [in,out], little-endian float32; gate,up,down concatenated",
+  "weight_shapes": [
+    [
+      3,
+      64
+    ],
+    [
+      3,
+      64
+    ],
+    [
+      64,
+      1
+    ]
+  ],
+  "weights_file": "weights.bin",
+  "weights_sha256": "b3a5f955482cef375ddef1995a9233c3c88bd96fe5748ca0d4f8ad15d572fa79",
+  "width": 64
+}
