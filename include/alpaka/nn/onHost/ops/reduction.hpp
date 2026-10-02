@@ -175,6 +175,19 @@ namespace alpaka::nn::onHost::ops
         }
     } // namespace detail
 
+    /** @brief Sum over one axis.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view with the same rank as @p in; the reduced axis has extent 1.
+     * @param axis Axis to reduce.
+     *
+     * @throw std::invalid_argument if the ranks differ, @p axis is out of range, or @p out extents are not
+     *        `makeReducedExtents(in.getExtents(), axis)`.
+     * @note Asynchronous: keep all views alive and call `alpaka::onHost::wait(queue)` before reading @p out.
+     */
     template<typename T_Type>
     void reduceSum(auto& queue, auto exec, auto const& in, auto& out, uint32_t axis)
     {
@@ -196,6 +209,18 @@ namespace alpaka::nn::onHost::ops
             in);
     }
 
+    /** @brief Maximum over one axis, initialized with the lowest representable value.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view with the same rank as @p in; the reduced axis has extent 1.
+     * @param axis Axis to reduce.
+     *
+     * @throw std::invalid_argument if the ranks differ, @p axis is out of range, or @p out extents are wrong.
+     * @note Asynchronous, caller-owned views (see `reduceSum`).
+     */
     template<typename T_Type>
     void reduceMax(auto& queue, auto exec, auto const& in, auto& out, uint32_t axis)
     {
@@ -217,6 +242,18 @@ namespace alpaka::nn::onHost::ops
             in);
     }
 
+    /** @brief Arithmetic mean over one axis (sum divided by the reduced extent).
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view with the same rank as @p in; the reduced axis has extent 1.
+     * @param axis Axis to reduce.
+     *
+     * @throw std::invalid_argument if the ranks differ, @p axis is out of range, or @p out extents are wrong.
+     * @note Asynchronous, caller-owned views (see `reduceSum`).
+     */
     template<typename T_Type>
     void reduceMean(auto& queue, auto exec, auto const& in, auto& out, uint32_t axis)
     {
@@ -238,6 +275,18 @@ namespace alpaka::nn::onHost::ops
             in);
     }
 
+    /** @brief Sum of squares over one axis: `sum(in * in)`.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param in Input view.
+     * @param out Output view with the same rank as @p in; the reduced axis has extent 1.
+     * @param axis Axis to reduce.
+     *
+     * @throw std::invalid_argument if the ranks differ, @p axis is out of range, or @p out extents are wrong.
+     * @note Asynchronous, caller-owned views (see `reduceSum`).
+     */
     template<typename T_Type>
     void reduceSumSquares(auto& queue, auto exec, auto const& in, auto& out, uint32_t axis)
     {
@@ -259,6 +308,20 @@ namespace alpaka::nn::onHost::ops
             in);
     }
 
+    /** @brief Dot product over one axis: `sum(lhs * rhs)`; both inputs must have identical extents.
+     *
+     * @tparam T_Type Scalar type of the operation.
+     * @param queue alpaka queue the work is enqueued on.
+     * @param exec Executor selected for @p queue.
+     * @param lhs First input view.
+     * @param rhs Second input view; must match @p lhs exactly.
+     * @param out Output view with the same rank as the inputs; the reduced axis has extent 1.
+     * @param axis Axis to reduce.
+     *
+     * @throw std::invalid_argument if the ranks differ, @p axis is out of range, @p out extents are wrong, or the
+     *        inputs differ in shape.
+     * @note Asynchronous, caller-owned views (see `reduceSum`).
+     */
     template<typename T_Type>
     void dot(auto& queue, auto exec, auto const& lhs, auto const& rhs, auto& out, uint32_t axis)
     {
@@ -283,6 +346,16 @@ namespace alpaka::nn::onHost::ops
             rhs);
     }
 
+    /** @brief Build the output extents for an axis reduction.
+     *
+     * Returns a copy of @p extents with `extents[axis]` set to 1. The output rank therefore equals the input rank
+     * and the reduced axis is kept as a length-one axis (no rank reduction). Use this to size and validate the
+     * @p out view passed to `reduceSum`/`reduceMax`/`reduceMean`/`reduceSumSquares`/`dot`.
+     *
+     * @param extents Input extents.
+     * @param axis Axis that will be reduced.
+     * @return Copy of @p extents with the reduced axis extent forced to 1.
+     */
     inline auto makeReducedExtents(alpaka::concepts::Vector auto extents, uint32_t axis)
     {
         return detail::makeReducedExtents(extents, axis);

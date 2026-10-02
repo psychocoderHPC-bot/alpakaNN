@@ -17,7 +17,8 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(FetchContent)
 
-option(alpakaNN_BUILD_TESTS "Build alpakaNN unit tests." ${PROJECT_IS_TOP_LEVEL})
+option(alpakaNN_TESTS "Build alpakaNN unit tests." ${PROJECT_IS_TOP_LEVEL})
+option(alpakaNN_EXAMPLES "Build alpakaNN examples." ${PROJECT_IS_TOP_LEVEL})
 set(alpaka_COMPILE_PEDANTIC ON CACHE BOOL "Compile all code with strict compiler settings." FORCE)
 
 if(alpaka_DEP_HIP)
@@ -77,10 +78,14 @@ target_link_libraries(
     INTERFACE $<BUILD_INTERFACE:alpaka::alpaka> $<BUILD_INTERFACE:alpakaVendor::alpakaVendor>
 )
 
-if(alpakaNN_BUILD_TESTS)
+if(alpakaNN_TESTS)
     include(CTest)
     enable_testing()
     add_subdirectory(test)
+endif()
+
+if(alpakaNN_EXAMPLES)
+    add_subdirectory(examples)
 endif()
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
