@@ -1,0 +1,230 @@
+{
+  "format": "alpakaNN-heat-closure-f32-v2",
+  "architecture": "gated_silu_bias_free_v1",
+  "dtype": "float32",
+  "weight_layout": "row-major [in,out], little-endian float32; gate,up,down concatenated",
+  "feature_encoding": "fourier_xy_k0_5",
+  "feature_order": [
+    "u",
+    "x",
+    "y",
+    "sin1pi_x",
+    "cos1pi_x",
+    "sin1pi_y",
+    "cos1pi_y",
+    "sin2pi_x",
+    "cos2pi_x",
+    "sin2pi_y",
+    "cos2pi_y",
+    "sin4pi_x",
+    "cos4pi_x",
+    "sin4pi_y",
+    "cos4pi_y",
+    "sin8pi_x",
+    "cos8pi_x",
+    "sin8pi_y",
+    "cos8pi_y",
+    "sin16pi_x",
+    "cos16pi_x",
+    "sin16pi_y",
+    "cos16pi_y",
+    "sin32pi_x",
+    "cos32pi_x",
+    "sin32pi_y",
+    "cos32pi_y"
+  ],
+  "feature_count": 27,
+  "weight_shapes": [
+    [
+      27,
+      64
+    ],
+    [
+      27,
+      64
+    ],
+    [
+      64,
+      1
+    ]
+  ],
+  "width": 64,
+  "bias_free": true,
+  "alpha_min": 0.01,
+  "alpha_max": 6.0,
+  "beta": 0.5,
+  "beta_mismatch_policy": "reject",
+  "coordinate_domain": [
+    0.0,
+    1.0
+  ],
+  "temperature_domain": [
+    0.0,
+    1.0
+  ],
+  "output": "alpha_min + (alpha_max - alpha_min) * sigmoid(z)",
+  "material_formula": "base(x,y) * (1 + beta*u); inclusion if r2 < 0.12^2 => 0.02; else conductor if abs(y-0.5)<0.05 and 0.45<x<0.65 => 4.0; else 0.5+0.4*H(sin(6*pi*y)), H(z)=1 iff z>=0",
+  "weights_file": "weights_v2.bin",
+  "weights_sha256": "83c98b08abe90eb45fc3da1a4adfb599294a1e35332535590a6b4e445de958b0",
+  "weights_bytes": 14080,
+  "weights_float_count": 3520,
+  "kind": "trained_model",
+  "variant": "B",
+  "training": {
+    "seed": 0,
+    "optimizer": "Adam + cosine annealing",
+    "learning_rate": 0.001,
+    "batch_size": 4096,
+    "epochs_requested": 1000,
+    "epochs_run": 1000,
+    "patience": 120,
+    "selected_by": "best validation MAE",
+    "best_epoch": 947,
+    "best_val_mae": 0.16949333250522614,
+    "device": "cuda",
+    "torch_version": "2.5.1+rocm6.2",
+    "duration_seconds": 142.97021174430847,
+    "loss": "physical coefficient MSE",
+    "params": 3520
+  },
+  "dataset": "/tmp/alpakaNN-variantB-model/data/dataset.npz",
+  "metrics": {
+    "validation": {
+      "count": 40505,
+      "mse": 0.0814114478766403,
+      "mae": 0.16949333338398723,
+      "max_abs": 3.690049648284912,
+      "by_region": {
+        "inclusion": {
+          "count": 5354,
+          "mse": 0.07184457304955075,
+          "mae": 0.15554965868975645,
+          "max_abs": 1.9825192112475634
+        },
+        "conductor": {
+          "count": 3666,
+          "mse": 0.3063892574745182,
+          "mae": 0.31951530683385304,
+          "max_abs": 3.690049648284912
+        },
+        "stripe_high": {
+          "count": 15674,
+          "mse": 0.0739890463840574,
+          "mae": 0.17186101396228604,
+          "max_abs": 1.9339804649353027
+        },
+        "background_low": {
+          "count": 15811,
+          "mse": 0.039844887812960667,
+          "mae": 0.13708316668115042,
+          "max_abs": 2.3666401505470276
+        }
+      }
+    },
+    "clean_holdout": {
+      "count": 180224,
+      "mse": 0.06317825077928643,
+      "mae": 0.13232474925392912,
+      "max_abs": 2.0,
+      "by_region": {
+        "inclusion": {
+          "count": 8173,
+          "mse": 0.00891069664852479,
+          "mae": 0.040619478969840785,
+          "max_abs": 1.4501423556357622
+        },
+        "conductor": {
+          "count": 3399,
+          "mse": 1.3290681550121908,
+          "mae": 0.9681496243506328,
+          "max_abs": 2.0
+        },
+        "stripe_high": {
+          "count": 84029,
+          "mse": 0.05586034292171753,
+          "mae": 0.13575381820294347,
+          "max_abs": 1.3400000240653753
+        },
+        "background_low": {
+          "count": 84623,
+          "mse": 0.024839801596283354,
+          "mae": 0.10420470138114546,
+          "max_abs": 0.7400000002235174
+        }
+      }
+    },
+    "test": {
+      "count": 40507,
+      "mse": 0.08243018140692657,
+      "mae": 0.16929313184435352,
+      "max_abs": 3.5832276344299316,
+      "by_region": {
+        "inclusion": {
+          "count": 5377,
+          "mse": 0.06856067648199354,
+          "mae": 0.148702897201591,
+          "max_abs": 2.0111479964107275
+        },
+        "conductor": {
+          "count": 3805,
+          "mse": 0.3150692348545955,
+          "mae": 0.3265957231120587,
+          "max_abs": 3.5832276344299316
+        },
+        "stripe_high": {
+          "count": 15653,
+          "mse": 0.07242587292361184,
+          "mae": 0.1703022023260004,
+          "max_abs": 1.3399476408958435
+        },
+        "background_low": {
+          "count": 15672,
+          "mse": 0.04069856899640525,
+          "mae": 0.13715826403241482,
+          "max_abs": 1.5282267332077026
+        }
+      }
+    }
+  },
+  "acceptance": {
+    "basis": "MAE <= 0.05*alpha_max and max_abs <= 0.20*alpha_max on validation and clean holdout (test informational)",
+    "targets": {
+      "mae": 0.30000000000000004,
+      "max_abs": 1.2000000000000002
+    },
+    "splits": {
+      "validation": {
+        "evaluated": true,
+        "mae": 0.16949333338398723,
+        "max_abs": 3.690049648284912,
+        "mse": 0.0814114478766403,
+        "mae_pass": true,
+        "max_abs_pass": false,
+        "pass": false
+      },
+      "clean_holdout": {
+        "evaluated": true,
+        "mae": 0.13232474925392912,
+        "max_abs": 2.0,
+        "mse": 0.06317825077928643,
+        "mae_pass": true,
+        "max_abs_pass": false,
+        "pass": false
+      },
+      "test": {
+        "evaluated": true,
+        "mae": 0.16929313184435352,
+        "max_abs": 3.5832276344299316,
+        "mse": 0.08243018140692657,
+        "mae_pass": true,
+        "max_abs_pass": false,
+        "pass": false
+      }
+    },
+    "verdict": "FAIL"
+  },
+  "inference_parity_csv": "inference_parity_v2.csv",
+  "history_file": "variantB.history.json",
+  "region_metrics_file": "variantB.region_metrics.json",
+  "roundtrip_max_abs_from_binary": 7.539346195128971e-07
+}

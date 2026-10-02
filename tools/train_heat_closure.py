@@ -6,6 +6,12 @@
 CSV rows contain [u,x,y,alpha_true,split]. Model binary arrays are contiguous
 little-endian float32 row-major [in,out], in gate/up/down order; JSON records shapes.
 PyTorch is optional for dataset generation and metadata/model serialization.
+
+``train --variant raw`` exports the v1 raw ``[u,x,y]`` contract
+(``alpakaNN-heat-closure-f32-v1``); ``train --variant B`` exports the v2
+Fourier variant-B contract (``alpakaNN-heat-closure-f32-v2``,
+``feature_encoding = fourier_xy_k0_5``, 27 inputs). The C++ loader selects the
+contract from the metadata, so one binary format serves both.
 """
 from __future__ import annotations
 
@@ -23,8 +29,41 @@ from pathlib import Path
 ALPHA_MIN, ALPHA_MAX = 0.01, 6.0
 BETA_DEFAULT = 0.5
 WIDTH = 64
+KMAX = 5  # variant-B Fourier band: k = 0..5 -> 4*(KMAX+1) extra columns
 FORMULA = "base(x,y) * (1 + beta*u); inclusion if r2 < 0.12^2 => 0.02; else conductor if abs(y-0.5)<0.05 and 0.45<x<0.65 => 4.0; else 0.5+0.4*H(sin(6*pi*y)), H(z)=1 iff z>=0"
 ARCH = "gated_silu_bias_free_v1"
+FORMAT_V1 = "alpakaNN-heat-closure-f32-v1"
+FORMAT_V2 = "alpakaNN-heat-closure-f32-v2"
+FEATURE_ENCODING_V2 = "fourier_xy_k0_5"
+WEIGHT_LAYOUT = "row-major [in,out], little-endian float32; gate,up,down concatenated"
+OUTPUT_STRING = "alpha_min + (alpha_max - alpha_min) * sigmoid(z)"
+
+
+def variant_contract(variant: str) -> tuple[int, list[str], str, str | None]:
+    """Return (input_dim, feature_order, format, feature_encoding) for a variant.
+
+    ``raw`` is the original v1 ``[u,x,y]`` contract; ``B`` is the Fourier
+    variant-B contract with the same extra columns the C++ runtime emits.
+    """
+    if variant == "raw":
+        return 3, ["u", "x", "y"], FORMAT_V1, None
+    if variant != "B":
+        raise ValueError(f"unknown variant {variant!r}")
+    order = ["u", "x", "y"]
+    for k in range(KMAX + 1):
+        p = 2 ** k
+        order += [f"sin{p}pi_x", f"cos{p}pi_x", f"sin{p}pi_y", f"cos{p}pi_y"]
+    return len(order), order, FORMAT_V2, FEATURE_ENCODING_V2
+
+
+def encode_features(u, x, y, variant: str):
+    """Build the model input matrix matching the C++ ``PackFeatures`` order."""
+    row = [u, x, y]
+    if variant == "B":
+        for k in range(KMAX + 1):
+            w = (2.0 ** k) * math.pi
+            row += [math.sin(w * x), math.cos(w * x), math.sin(w * y), math.cos(w * y)]
+    return row
 
 
 def alpha_true(u: float, x: float, y: float, beta: float = BETA_DEFAULT) -> float:
@@ -41,49 +80,54 @@ def alpha_max_for_beta(beta: float) -> float:
     return max(ALPHA_MAX, 4.0 * (1.0 + beta))
 
 
-def metadata(beta: float, **extra) -> dict:
+def metadata(beta: float, variant: str = "raw", width: int = WIDTH, **extra) -> dict:
+    in_dim, order, fmt, encoding = variant_contract(variant)
     upper = alpha_max_for_beta(beta)
     result = {
-        "format": "alpakaNN-heat-closure-f32-v1", "architecture": ARCH,
-        "width": WIDTH, "feature_order": ["u", "x", "y"],
-        "weight_layout": "row-major [in,out], little-endian float32; gate,up,down concatenated",
-        "weight_shapes": [[3, WIDTH], [3, WIDTH], [WIDTH, 1]],
-        "output": "alpha_min + (alpha_max - alpha_min) * sigmoid(z)",
+        "format": fmt, "architecture": ARCH,
+        "width": width, "feature_order": order,
+        "weight_layout": WEIGHT_LAYOUT,
+        "weight_shapes": [[in_dim, width], [in_dim, width], [width, 1]],
+        "output": OUTPUT_STRING,
         "alpha_min": ALPHA_MIN, "alpha_max": upper,
         "beta": beta, "beta_mismatch_policy": "reject",
         "material_formula": FORMULA, "coordinate_domain": [0.0, 1.0],
         "temperature_domain": [0.0, 1.0], "dtype": "float32",
     }
+    if encoding is not None:
+        result["feature_encoding"] = encoding
     result.update(extra)
     return result
 
 
-def encode_weights(gate, up, down) -> bytes:
+def encode_weights(gate, up, down, in_dim: int = 3, width: int = WIDTH) -> bytes:
     """Serialize nested [in,out] rows in fixed gate/up/down order."""
     chunks = []
-    for rows, expected in ((gate, (3, WIDTH)), (up, (3, WIDTH)), (down, (WIDTH, 1))):
+    for rows, expected in ((gate, (in_dim, width)), (up, (in_dim, width)), (down, (width, 1))):
         if len(rows) != expected[0] or any(len(row) != expected[1] for row in rows):
             raise ValueError(f"weight array must have shape {expected}")
         chunks.extend(struct.pack("<f", float(value)) for row in rows for value in row)
     return b"".join(chunks)
 
 
-def decode_weights(payload: bytes):
+def decode_weights(payload: bytes, in_dim: int = 3, width: int = WIDTH):
     """Read the exact three row-major little-endian arrays from the binary format."""
-    count = (3 * WIDTH) + (3 * WIDTH) + WIDTH
+    count = (in_dim * width) + (in_dim * width) + width
     if len(payload) != count * 4:
         raise ValueError(f"expected {count * 4} bytes, got {len(payload)}")
     values = struct.unpack("<" + "f" * count, payload)
     offset = 0
     result = []
-    for rows, cols in ((3, WIDTH), (3, WIDTH), (WIDTH, 1)):
+    for rows, cols in ((in_dim, width), (in_dim, width), (width, 1)):
         arr = [list(values[offset + r * cols:offset + (r + 1) * cols]) for r in range(rows)]
         result.append(arr); offset += rows * cols
     return tuple(result)
 
 
 def write_metadata(path: Path, beta: float, **extra) -> None:
-    path.write_text(json.dumps(metadata(beta, **extra), indent=2, sort_keys=True) + "\n")
+    variant = extra.pop("variant", "raw")
+    width = extra.pop("width", WIDTH)
+    path.write_text(json.dumps(metadata(beta, variant, width, **extra), indent=2, sort_keys=True) + "\n")
 
 
 def dataset(args) -> None:
@@ -156,17 +200,27 @@ def train(args) -> None:
     data = []
     with open(args.csv, newline="") as f:
         data = list(csv.DictReader(f))
+    in_dim, _, _, _ = variant_contract(args.variant)
     def tensors(split):
         subset = [r for r in data if r["split"] == split]
         if not subset: raise ValueError(f"empty {split} dataset")
-        x = torch.tensor([[float(r[k]) for k in ("u", "x", "y")] for r in subset], dtype=torch.float32)
+        raw = torch.tensor([[float(r[k]) for k in ("u", "x", "y")] for r in subset], dtype=torch.float32)
+        if args.variant == "B":
+            cols = [raw]
+            for k in range(KMAX + 1):
+                w = (2.0 ** k) * math.pi
+                cols += [torch.sin(w * raw[:, 1:2]), torch.cos(w * raw[:, 1:2]),
+                         torch.sin(w * raw[:, 2:3]), torch.cos(w * raw[:, 2:3])]
+            x = torch.cat(cols, dim=1)
+        else:
+            x = raw
         y = torch.tensor([float(r["alpha_true"]) for r in subset], dtype=torch.float32).view(-1, 1)
         return x, y
     trX,trY=tensors("train"); vaX,vaY=tensors("validation")
     # Never use the final test split for checkpoint selection.
     test_pair=None if args.skip_test else tensors("test")
     shiftX,shiftY=tensors("spatial_eval")
-    gate=torch.nn.Parameter(torch.empty(3,WIDTH)); up=torch.nn.Parameter(torch.empty(3,WIDTH)); down=torch.nn.Parameter(torch.empty(WIDTH,1))
+    gate=torch.nn.Parameter(torch.empty(in_dim,WIDTH)); up=torch.nn.Parameter(torch.empty(in_dim,WIDTH)); down=torch.nn.Parameter(torch.empty(WIDTH,1))
     torch.nn.init.xavier_uniform_(gate); torch.nn.init.xavier_uniform_(up); torch.nn.init.xavier_uniform_(down)
     params=[gate,up,down]; opt=torch.optim.Adam(params, lr=args.lr)
     def forward(x):
@@ -200,8 +254,8 @@ def train(args) -> None:
             return {name:{"count":int(mask.sum()),"mse":float((err[mask]**2).mean()),"mae":float(err[mask].mean()),"max_abs":float(err[mask].max())} for name,mask in regions.items() if mask.any()}
     out=Path(args.output); out.parent.mkdir(parents=True,exist_ok=True)
     arrays=[p.detach().cpu().tolist() for p in params]
-    out.write_bytes(encode_weights(*arrays))
-    m=metadata(args.beta, kind="trained_model", weights_file=out.name,
+    out.write_bytes(encode_weights(*arrays, in_dim=in_dim, width=WIDTH))
+    m=metadata(args.beta, args.variant, kind="trained_model", weights_file=out.name,
       weights_sha256=hashlib.sha256(out.read_bytes()).hexdigest(), training_csv_sha256=hashlib.sha256(Path(args.csv).read_bytes()).hexdigest(),
       training={"seed":args.seed,"epochs_requested":args.epochs,"epochs_run":args.epochs,"best_epoch":best_epoch,"best_validation_mse":best,"learning_rate":args.lr,"batch_size":args.batch_size,"optimizer":"Adam","loss":"physical coefficient MSE","device":"cpu","duration_seconds":time.time()-start},
       metrics={"validation":metrics(vaX,vaY),"validation_by_region":regional_metrics(vaX,vaY),
@@ -218,7 +272,7 @@ def train(args) -> None:
 def main():
     p=argparse.ArgumentParser(description=__doc__); sub=p.add_subparsers(dest="command",required=True)
     d=sub.add_parser("dataset",help="generate CSV and dataset metadata"); d.add_argument("--output",default="heat_closure.csv"); d.add_argument("--beta",type=float,default=BETA_DEFAULT); d.add_argument("--seed",type=int,default=0); d.add_argument("--grid-samples",type=int,default=4096); d.add_argument("--temperature-levels",type=int,default=11); d.add_argument("--random-samples",type=int,default=20000); d.add_argument("--interface-samples",type=int,default=4000); d.add_argument("--interface-epsilon",type=float,default=1e-4); d.add_argument("--spatial-holdout",type=float,default=.9); d.set_defaults(func=dataset)
-    t=sub.add_parser("train",help="train gated-SiLU closure on CPU and export model"); t.add_argument("--csv",required=True); t.add_argument("--output",default="models/heat_closure/weights.bin"); t.add_argument("--beta",type=float,default=BETA_DEFAULT); t.add_argument("--seed",type=int,default=0); t.add_argument("--epochs",type=int,default=200); t.add_argument("--batch-size",type=int,default=4096); t.add_argument("--lr",type=float,default=1e-3); t.add_argument("--threads",type=int,default=1); t.add_argument("--skip-test",action="store_true",help="do not evaluate the final test split"); t.set_defaults(func=train)
+    t=sub.add_parser("train",help="train gated-SiLU closure on CPU and export model"); t.add_argument("--csv",required=True); t.add_argument("--output",default="models/heat_closure/weights.bin"); t.add_argument("--variant",choices=("raw","B"),default="raw",help="raw = v1 [u,x,y] contract; B = v2 Fourier variant-B contract"); t.add_argument("--beta",type=float,default=BETA_DEFAULT); t.add_argument("--seed",type=int,default=0); t.add_argument("--epochs",type=int,default=200); t.add_argument("--batch-size",type=int,default=4096); t.add_argument("--lr",type=float,default=1e-3); t.add_argument("--threads",type=int,default=1); t.add_argument("--skip-test",action="store_true",help="do not evaluate the final test split"); t.set_defaults(func=train)
     args=p.parse_args()
     if not math.isfinite(args.beta) or args.beta < 0: p.error("--beta must be finite and nonnegative")
     if args.command=="dataset" and (args.grid_samples<4 or args.temperature_levels<2 or args.random_samples<0 or args.interface_samples<0 or args.interface_epsilon<=0 or not 0<args.spatial_holdout<1): p.error("invalid dataset sampling options")

@@ -8,17 +8,22 @@ are `float`. There is **no device-to-host copy of the temperature field on the
 inference path**; host copies happen only for snapshots, CSV export and final
 diagnostics.
 
-The learned model in `models/heat_closure/` is a **demonstrator, not a validated
-accurate closure**: the training pipeline's own acceptance verdict is FAIL (see
-[Model contract](#model-contract) and `../../docs/heat_closure_report.md`).
+Two learned models are documented in `models/heat_closure/`: **v1** (raw
+`[u,x,y]` contract baseline) and **v2 / variant B** (Fourier-encoded, 27 inputs,
+the recommended model). Both are **demonstrators, not validated accurate
+closures**: the field targets are not met, and `max|err|` is provably out of
+reach for a continuous model (see [Model contract](#model-contract) and
+`../../docs/heat_closure_report.md`); v2 does meet the coefficient MAE target.
 
-The trained binary `models/heat_closure/weights.bin` is **intentionally not
-committed** (the operator decision is "do not check in the model binary; everyone
-can retrain it"). Only the small documentation manifest
-`models/heat_closure/weights.bin.metadata.json` is tracked. The C++ tests and
-this example build and pass on a fresh checkout without any pre-existing model:
-tests generate a deterministic in-test fixture, and `--material nn` runs whenever
-you pass a retrained `--weights FILE`. See
+The trained binaries `models/heat_closure/weights.bin` and
+`models/heat_closure/weights_v2.bin` are **intentionally not committed** (the
+operator decision is "do not check in the model binary; everyone can retrain
+it"). Only the small documentation manifests
+(`weights.bin.metadata.json`, `weights_v2.bin.metadata.json`) and
+`models/heat_closure/README.md` are tracked. The C++ tests and this example build
+and pass on a fresh checkout without any pre-existing model: tests generate
+deterministic v1 and v2 in-test fixtures, and `--material nn` runs whenever you
+pass a retrained `--weights FILE`. See
 [section 2](#2-train-or-regenerate-the-model-external-pytorch) for the exact
 retrain commands.
 
@@ -55,13 +60,14 @@ The executable is written to
 
 ## 2. Train or regenerate the model (external PyTorch)
 
-**The model binary is not committed.** `models/heat_closure/weights.bin` (and the
-generated `weights.bin.inference_parity.csv` / `weights.history.json`) are
-`.gitignore`d and absent from a fresh checkout; regenerate them with
-`tools/train_heat_closure.py` before running an NN model-quality comparison that
-needs the trained checkpoint. The tests do not need it (they build a fixture),
-and `--material nn` only needs whatever `--weights FILE` you pass. Committing a
-regenerated binary is not required; if you deliberately want to track one, use
+**The model binaries are not committed.** `models/heat_closure/weights.bin` and
+`models/heat_closure/weights_v2.bin` (and their generated `.inference_parity.csv`
+/ `.history.json` sidecars) are `.gitignore`d and absent from a fresh checkout;
+regenerate them with `tools/train_heat_closure.py` before running an NN
+model-quality comparison that needs the trained checkpoint. The tests do not need
+them (they build v1 and v2 fixtures), and `--material nn` only needs whatever
+`--weights FILE` you pass. Committing a regenerated binary is not required; if
+you deliberately want to track one, use
 `git add -f models/heat_closure/weights.bin`.
 
 Training is **outside** alpakaNN and is not part of the C++ build. The tool is
@@ -70,9 +76,11 @@ not require PyTorch; only `train` does).
 
 PyTorch versions actually observed in the run logs:
 
-- Final model fine-tuning: `torch 2.5.1+rocm6.2` on an AMD Radeon RX 7900 XTX
+- v1 final model fine-tuning: `torch 2.5.1+rocm6.2` on an AMD Radeon RX 7900 XTX
   (`device` in `models/heat_closure/weights.bin.metadata.json` is
   `cuda:AMD Radeon RX 7900 XTX`).
+- v2 variant B training: `torch 2.5.1+rocm6.2`, `device = cuda`, 1000 epochs
+  (recorded in `models/heat_closure/weights_v2.bin.metadata.json`).
 - Host inference-parity recomputation: `torch 2.5.1+cpu`.
 - No CUDA PyTorch install was used for any recorded run; the NVIDIA A30 was used
   only for the CUDA **C++/alpaka** backend.
@@ -292,16 +300,28 @@ the solver kernel, so the inference path stays on the accelerator.
 
 ### Retraining the v2 (variant B) model
 
-The feasibility study (`/tmp/alpakaNN-results/nhc-20261001/fit-study/FIT_STUDY.md`
-on the dev host, not committed) trains the Fourier variant B. The committed
-`tools/train_heat_closure.py` emits the v1 metadata; the v2 binary is produced by
-the study harness or by re-exporting the same architecture with the expanded
-feature order. **The trained binary is not committed** (the operator decision is
-"do not check in the model binary; everyone can retrain it"); only the small
-documentation manifest is tracked. The C++ tests self-generate a v1 and a v2
-fixture, so a fresh checkout builds and passes without any model binary. When
-you pass a retrained `--weights FILE`, `--material nn` accepts either format and
-takes the alpha bounds from that metadata.
+`tools/train_heat_closure.py train --variant B` emits the v2 metadata and
+binary; `--variant raw` (default) emits the v1 contract:
+
+```sh
+python3 tools/train_heat_closure.py dataset --output /tmp/heat_closure.csv
+python3 tools/train_heat_closure.py train --variant B \
+  --csv /tmp/heat_closure.csv \
+  --output models/heat_closure/weights_v2.bin \
+  --seed 0 --epochs 200 --batch-size 4096 --lr 1e-3
+```
+
+**The trained binary is not committed** (the operator decision is "do not check
+in the model binary; everyone can retrain it"); only the small documentation
+manifests (`weights.bin.metadata.json`, `weights_v2.bin.metadata.json`) and
+`models/heat_closure/README.md` are tracked; the binaries are `.gitignore`d. The
+tracked `weights_v2.bin.metadata.json` documents the recommended trained variant-B
+checkpoint described in `models/heat_closure/README.md` (it also carries the
+recorded PyTorch-GPU training record; the committed tool reproduces the contract,
+not necessarily bit-identical weights). The C++ tests self-generate a v1 and a
+v2 fixture, so a fresh checkout builds and passes **without any model binary**.
+When you pass a retrained `--weights FILE`, `--material nn` accepts either
+format and takes the alpha bounds from that metadata.
 
 The coefficient is computed from the current state **before the first update**
 and recomputed every step; solver arithmetic stays `double` while network I/O
@@ -309,33 +329,58 @@ stays `float`.
 
 ## 5. Metrics and limitations
 
-**Acceptance is FAIL.** The metadata block `acceptance` records
-`verdict = "FAIL"` for both the validation and the clean-holdout splits against
-the Section 7.4 targets `MAE <= 0.05*alpha_max = 0.30` and
-`max_abs <= 0.20*alpha_max = 1.20`:
+Two model contracts are documented. **v1** is the original raw `[u,x,y]`
+contract baseline; **v2 (variant B)** is the recommended Fourier-encoded model.
+Both miss the field targets; v2 meets the coefficient MAE target but not the
+`max|err|` target, which is provably unreachable for any continuous model on
+this geometry.
+
+### v2 (variant B, recommended)
+
+The tracked `models/heat_closure/weights_v2.bin.metadata.json` documents the
+trained variant-B checkpoint (`weights_sha256 = 83c98b08…`); see
+`models/heat_closure/README.md`.
+
+| split | coefficient MAE | coefficient max abs | targets 0.30 / 1.20 |
+|---|---|---|---|
+| validation | 0.1695 | 3.6900 | MAE PASS, max FAIL |
+| clean holdout | **0.1323** | 2.0000 | **MAE PASS**, max FAIL |
+| test | 0.1693 | 3.5832 | MAE PASS, max FAIL |
+
+Field vs analytical preset (grid 64, `tmax 0.1`, matched schedule):
+final `relL2 0.0500` / normalized `Linf 0.1925` versus Section 7.2 targets
+1 % / 2 % — **FAIL**, but both improved versus v1. The worst transient `Linf` is
+0.4403 (early transients), i.e. not uniformly better.
+
+### v1 (original contract baseline, for comparison)
 
 | split | MAE | max abs | target |
 |---|---|---|---|
 | validation | 0.4527 | 4.4188 | FAIL |
 | clean holdout | 0.4522 | 4.8138 | FAIL |
 | test | 0.4673 | 4.4900 | FAIL |
-| spatial-eval | 0.3363 | 1.2519 | (diagnostic) |
 
-On the same instantaneous NN final state, the exported `alpha.csv` gives
-overall MAE 0.3181 / max abs 3.2761, with the conductor region (MAE 2.1184)
-dominating; on the older model in the primary matrix the same-state MAE is
-0.3904 / max 2.9996. Same-grid NN-vs-preset final-field error is `relL2` 0.0911
-/ normalized Linf 0.2539 (final model) versus the Section 7.2 targets 1 % / 2 %
-— also FAIL. The regression test reports these numbers and deliberately does
-not enforce the unmet targets.
+On the same instantaneous NN final state, v1's exported `alpha.csv` gives overall
+MAE 0.3181 / max abs 3.2761, with the conductor region (MAE 2.1184) dominating;
+v1 same-grid final-field error is `relL2` 0.0911 / normalized Linf 0.2539.
 
-Why it fails: the ground-truth map is **discontinuous** (a 0.02 inclusion and a
-4.0 conductor embedded in a 0.5/0.9 stripe), while the model is a small smooth
-bias-free gated-SiLU network. A smooth, approximately bias-free regressor has a
-global-MAE floor of roughly **0.343** on this random state distribution even
-with a perfect conductor fit; the discontinuous interfaces cannot be represented
-at network resolution. The correct consequence is to treat this as an
-integration/portability demonstrator, not a physical closure.
+### Why `max|err|` cannot be met by a continuous model
+
+The ground-truth map is **discontinuous** (0.02 inclusion, 4.0 conductor,
+0.5/0.9 stripe), while both models are small continuous gated-SiLU networks.
+The inclusion/conductor interface is a coefficient jump of `J = (4.0-0.02)*1.5
+≈ 5.97`, so any continuous approximant pays at least `J/2 ≈ 2.99` across that
+interface — above the 1.20 target by construction. The separate experiments under
+`/workspace/heat_closure_variantB` confirm this empirically: a
+discontinuity-aware MoE / region classifier can meet both targets only by
+hardening the classification (and only on the clean holdout), separated-geometry
+and symmetry-feature variants still fail `max|err|` (3.4–3.7), and all tested
+continuous variants fail it. These are recorded as integration evidence, not as
+a production accuracy claim.
+
+The correct consequence is to treat this as an integration/portability
+demonstrator, not a physical closure. The regression test reports the measured
+numbers and deliberately does not enforce the unmet targets.
 
 Other limitations, stated plainly:
 

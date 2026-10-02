@@ -29,6 +29,29 @@ class TrainingToolsTest(unittest.TestCase):
         m=mod.metadata(.5)
         self.assertEqual(m["weight_shapes"], [[3,64],[3,64],[64,1]])
         self.assertEqual(m["beta_mismatch_policy"], "reject")
+        self.assertNotIn("feature_encoding", m)
+
+    def test_variant_b_metadata_and_binary_roundtrip(self):
+        m=mod.metadata(.5, "B")
+        self.assertEqual(m["format"], "alpakaNN-heat-closure-f32-v2")
+        self.assertEqual(m["feature_encoding"], "fourier_xy_k0_5")
+        self.assertEqual(len(m["feature_order"]), 27)
+        self.assertEqual(m["weight_shapes"], [[27,64],[27,64],[64,1]])
+        gate=[[float(r*27+c) for c in range(mod.WIDTH)] for r in range(27)]
+        up=[[float(-r*27-c) for c in range(mod.WIDTH)] for r in range(27)]
+        down=[[float(r)] for r in range(mod.WIDTH)]
+        blob=mod.encode_weights(gate,up,down,in_dim=27)
+        self.assertEqual(len(blob), 4*((27*64)+(27*64)+64))
+        self.assertEqual((gate,up,down), mod.decode_weights(blob,in_dim=27))
+        # Feature builder matches the documented column order for one point.
+        row=mod.encode_features(1.0, 0.25, 0.75, "B")
+        self.assertEqual(len(row), 27)
+        self.assertAlmostEqual(row[0], 1.0)
+        self.assertAlmostEqual(row[1], 0.25)
+        self.assertAlmostEqual(row[2], 0.75)
+        self.assertAlmostEqual(row[3], math.sin(math.pi*0.25))
+        self.assertAlmostEqual(row[4], math.cos(math.pi*0.25))
+        self.assertEqual(len(mod.encode_features(1.0, 0.25, 0.75, "raw")), 3)
 
     def test_small_csv_is_reproducible_and_spatial_split_disjoint(self):
         import argparse, csv

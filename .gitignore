@@ -7,11 +7,15 @@
 /docs/cheatsheet/cheatsheet.pdf
 /models
 # Trained heat-closure outputs are intentionally not committed (retrain with
-# tools/train_heat_closure.py). Only the small weights.bin.metadata.json manifest
-# is tracked; force-add it if it ever becomes untracked.
+# tools/train_heat_closure.py). Only the small weights*.bin.metadata.json
+# manifests and models/heat_closure/README.md are tracked; force-add them if
+# they ever become untracked.
 /models/heat_closure/weights.bin
 /models/heat_closure/weights.bin.inference_parity.csv
 /models/heat_closure/weights.history.json
+/models/heat_closure/weights_v2.bin
+/models/heat_closure/weights_v2.bin.inference_parity.csv
+/models/heat_closure/weights_v2.history.json
 
 **/build*/
 
