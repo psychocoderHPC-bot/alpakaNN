@@ -413,8 +413,9 @@ namespace
         if constexpr(!ompCompiled)
         {
             if(selection.omp)
-                throw std::invalid_argument("--backend omp is not compiled in: this build has no OpenMP runtime "
-                                            "(configure with -Dalpaka_DEP_OMP=ON and an OpenMP-enabled compiler)");
+                throw std::invalid_argument(
+                    "--backend omp is not compiled in: this build has no OpenMP runtime "
+                    "(configure with -Dalpaka_DEP_OMP=ON and an OpenMP-enabled compiler)");
         }
         bool matched = false;
         bool compiledButUnavailable = false;
