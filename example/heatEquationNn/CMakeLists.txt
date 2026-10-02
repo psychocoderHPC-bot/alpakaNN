@@ -30,6 +30,16 @@ if(BUILD_TESTING)
     add_test(NAME heatEquationNn_device_solver COMMAND heatEquationNn_device_solver_test)
 endif()
 target_link_libraries(heatEquationNn PRIVATE alpaka::nn alpaka::alpaka)
+# The solver relies on strict IEEE-754 double arithmetic so the same field
+# matches across backends. icpx 2026.1 applies fast-math transforms to SYCL
+# device code at -O1..-O3 by default; on the Intel Arc A770 the stencil update
+# then diverges from the host (relL2 ~0.58 at grid 16) while -O0 and
+# -fno-fast-math reproduce the host bit-for-bit. Disable the transforms for the
+# example's device code only; this is a no-op for toolchains that already keep
+# IEEE semantics (e.g. the host g++ build).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+    target_compile_options(heatEquationNn PRIVATE -fno-fast-math)
+endif()
 alpaka_finalize(heatEquationNn)
 if(BUILD_TESTING)
     # The host selector must remain accepted and run to completion without touching the filesystem.
