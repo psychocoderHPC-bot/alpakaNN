@@ -188,10 +188,19 @@ namespace
             throw std::runtime_error("failed writing feature metadata");
     }
 
+    /** True when this translation unit was compiled with an OpenMP runtime. */
+#if defined(_OPENMP)
+    constexpr bool ompCompiled = true;
+#else
+    constexpr bool ompCompiled = false;
+#endif
+
     /** Pick the executor that matches the selected alpaka API.
      *
      * The host path keeps `cpuSerial` so `--backend host` stays byte-for-byte equivalent
      * to the previous default; the accelerator paths use the matching GPU executor.
+     * The separate `omp` selector (handled by dispatchBackend) maps the host device to
+     * `cpuOmpBlocks`, keeping the default host result unchanged.
      */
     template<class TDevice>
     constexpr auto executorFor(TDevice const& device)
@@ -340,6 +349,8 @@ namespace
         std::uint32_t deviceIndex = 0;
         /// A bare device index addresses the first available accelerator.
         bool firstAccelerator = false;
+        /// The `omp` selector uses the host device with the OpenMP executor.
+        bool omp = false;
     };
 
     bool isNumeric(std::string const& text)
@@ -350,15 +361,17 @@ namespace
 
     /** Resolve the `--backend` selector into a canonical name plus device index.
      *
-     * Accepted selectors: `host`, `hip`/`amd`/`amdgpu`, `cuda`, `oneapi`/`sycl`,
-     * and bare `0`-based accelerator device indices. A selector that is not
-     * compiled into this build is rejected by the caller with the exact missing
-     * build option.
+     * Accepted selectors: `host`, `omp`, `hip`/`amd`/`amdgpu`, `cuda`,
+     * `oneapi`/`sycl`, and bare `0`-based accelerator device indices. A selector
+     * that is not compiled into this build is rejected by the caller with the
+     * exact missing build option.
      */
     BackendSelection resolveBackend(std::string const& selector)
     {
         if(selector == "host")
             return {"host", 0, false};
+        if(selector == "omp")
+            return {"omp", 0, false, true};
         if(selector == "hip" || selector == "amd" || selector == "amdgpu")
             return {"hip", 0, false};
         if(selector == "cuda")
@@ -373,7 +386,8 @@ namespace
             return {"", static_cast<std::uint32_t>(index), true};
         }
         throw std::invalid_argument(
-            "unknown --backend selector '" + selector + "' (expected host, hip, cuda, oneapi, or a device index)");
+            "unknown --backend selector '" + selector
+            + "' (expected host, omp, hip, cuda, oneapi, or a device index)");
     }
 
     std::string lowerName(std::string text)
@@ -396,6 +410,12 @@ namespace
     template<class TFunction>
     int dispatchBackend(BackendSelection const& selection, TFunction&& launch)
     {
+        if constexpr(!ompCompiled)
+        {
+            if(selection.omp)
+                throw std::invalid_argument("--backend omp is not compiled in: this build has no OpenMP runtime "
+                                            "(configure with -Dalpaka_DEP_OMP=ON and an OpenMP-enabled compiler)");
+        }
         bool matched = false;
         bool compiledButUnavailable = false;
         std::string available;
@@ -419,7 +439,10 @@ namespace
                         auto const isHost = spec.getApi() == alpaka::api::host;
                         // Named selectors match one exact API; a numeric selector takes the
                         // first available accelerator (never host, which is always present).
-                        auto const nameMatches = selection.firstAccelerator ? !isHost : (selection.name == apiName);
+                        // The `omp` selector targets the host device with the OpenMP executor.
+                        auto const nameMatches
+                            = selection.omp ? isHost
+                                            : (selection.firstAccelerator ? !isHost : (selection.name == apiName));
                         if(!nameMatches)
                             return;
                         auto selector = alpaka::onHost::makeDeviceSelector(spec);
@@ -435,7 +458,12 @@ namespace
                                 + ": device index out of range (available: "
                                 + std::to_string(selector.getDeviceCount()) + ")");
                         auto device = selector.makeDevice(selection.deviceIndex);
-                        result = launch(device, executorFor(device), apiName);
+#if defined(_OPENMP)
+                        if(selection.omp)
+                            result = launch(device, alpaka::exec::cpuOmpBlocks, selection.name);
+                        else
+#endif
+                            result = launch(device, executorFor(device), apiName);
                         matched = true;
                     }(),
                     ...);
@@ -510,7 +538,7 @@ try
             std::cout
                 << "--grid N --tmax T --steps N --material uniform|preset|nn --beta B --alpha-min A --alpha-max A "
                    "--weights FILE --output DIR --export-alpha CSV --frames N --no-output --validate-strict "
-                   "--backend host|hip|cuda|oneapi|<device-index> "
+                   "--backend host|omp|hip|cuda|oneapi|<device-index> "
                    "--dump-features CSV [--samples N --seed N --temperature-samples N]\n";
             return 0;
         }
