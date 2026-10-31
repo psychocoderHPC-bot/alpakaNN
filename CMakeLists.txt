@@ -46,7 +46,7 @@ set(alpaka_HEADERCHECKS OFF CACHE BOOL "Disable alpaka3 header checks." FORCE)
 # The vendor bundles alpaka3 (via its own extern submodule or FetchContent) and exposes the
 # alpaka::blas / alpaka::fft abstractions used by alpakaNN's host GEMM/GEMV. The matching vendor BLAS
 # backend is mandatory for every enabled alpaka backend (enforced in alpakaNNVendorBackends.cmake).
-#   alpakaVendor neural-bunch fork = 94e31a637f159dea0b892082f86bdbb5d5120d30
+#   alpakaVendor neural-bunch fork = c49342ad8d1ddd5331998279f319be00593c641f
 #   bundled alpaka3 (alpaka-group/alpaka) = 7b92361468d3280c260200198081ae7e98f0bc56
 set(alpakaV_TESTS OFF CACHE BOOL "Disable alpakaVendor tests." FORCE)
 set(alpakaV_DOCS OFF CACHE BOOL "Disable alpakaVendor docs." FORCE)
@@ -57,12 +57,26 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/alpakaNNVendorBackends.cmake)
 # Pinned to the alpakaNN neural-bunch alpakaVendor branch; its extern/alpaka3 submodule is
 # pinned at alpaka-group/alpaka 7b92361468d3280c260200198081ae7e98f0bc56 (the revision used by
 # PIConGPU), so the vendor and the consumer compile the same alpaka.
-FetchContent_Declare(
-    alpakaVendor
-    GIT_REPOSITORY https://github.com/psychocoderHPC-bot/alpakaVendor.git
-    GIT_TAG 94e31a637f159dea0b892082f86bdbb5d5120d30
-)
-FetchContent_MakeAvailable(alpakaVendor)
+#
+# When a consumer already provides alpakaVendor::alpakaVendor (for example PIConGPU, which adds
+# its own alpaka and configures the vendor with alpakaV_ALPAKA_PROVIDER=extern), do not fetch a
+# second vendor/alpaka pair. Standalone builds keep the self-contained FetchContent path.
+if(NOT TARGET alpakaVendor::alpakaVendor)
+    if(TARGET alpaka::alpaka)
+        # An alpaka is already present but no vendor target is. Reuse that alpaka instead of
+        # adding the vendor's bundled copy, which would be a second alpaka in the same build.
+        set(alpakaV_ALPAKA_PROVIDER extern CACHE STRING "alpaka source provider used by alpakaVendor" FORCE)
+        message(STATUS "alpakaNN: existing alpaka::alpaka found; alpakaVendor uses the extern provider.")
+    endif()
+    FetchContent_Declare(
+        alpakaVendor
+        GIT_REPOSITORY https://github.com/psychocoderHPC-bot/alpakaVendor.git
+        GIT_TAG c49342ad8d1ddd5331998279f319be00593c641f
+    )
+    FetchContent_MakeAvailable(alpakaVendor)
+else()
+    message(STATUS "alpakaNN: reusing existing alpakaVendor::alpakaVendor target.")
+endif()
 
 add_library(alpakaNN INTERFACE)
 add_library(alpaka::nn ALIAS alpakaNN)
