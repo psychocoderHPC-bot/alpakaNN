@@ -9,6 +9,7 @@
 #include <alpaka/nn/core/shape.hpp>
 #include <alpaka/nn/nn/attention.hpp>
 #include <alpaka/nn/nn/rope.hpp>
+#include <alpaka/nn/onHost/core/binary.hpp>
 #include <alpaka/nn/onHost/core/view.hpp>
 #include <alpaka/nn/onHost/matrix/gemm.hpp>
 #include <alpaka/nn/onHost/matrix/gemv.hpp>
