@@ -46,7 +46,7 @@ set(alpaka_HEADERCHECKS OFF CACHE BOOL "Disable alpaka3 header checks." FORCE)
 # The vendor bundles alpaka3 (via its own extern submodule or FetchContent) and exposes the
 # alpaka::blas / alpaka::fft abstractions used by alpakaNN's host GEMM/GEMV. The matching vendor BLAS
 # backend is mandatory for every enabled alpaka backend (enforced in alpakaNNVendorBackends.cmake).
-#   alpakaVendor neural-bunch fork = c49342ad8d1ddd5331998279f319be00593c641f
+#   alpakaVendor neural-bunch fork = af24cc7b2bd125056e9889e270d3af7bdf972c6f
 #   bundled alpaka3 (alpaka-group/alpaka) = 7b92361468d3280c260200198081ae7e98f0bc56
 set(alpakaV_TESTS OFF CACHE BOOL "Disable alpakaVendor tests." FORCE)
 set(alpakaV_DOCS OFF CACHE BOOL "Disable alpakaVendor docs." FORCE)
@@ -71,7 +71,7 @@ if(NOT TARGET alpakaVendor::alpakaVendor)
     FetchContent_Declare(
         alpakaVendor
         GIT_REPOSITORY https://github.com/psychocoderHPC-bot/alpakaVendor.git
-        GIT_TAG c49342ad8d1ddd5331998279f319be00593c641f
+        GIT_TAG af24cc7b2bd125056e9889e270d3af7bdf972c6f
     )
     FetchContent_MakeAvailable(alpakaVendor)
 else()

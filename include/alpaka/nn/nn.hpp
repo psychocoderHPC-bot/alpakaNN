@@ -21,3 +21,4 @@
 #include <alpaka/nn/onHost/nn/softmax.hpp>
 #include <alpaka/nn/onHost/ops/elementwise.hpp>
 #include <alpaka/nn/onHost/ops/reduction.hpp>
+#include <alpaka/nn/onHost/ops/weighted_add.hpp>

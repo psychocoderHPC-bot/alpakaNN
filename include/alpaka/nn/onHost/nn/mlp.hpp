@@ -138,10 +138,13 @@ namespace alpaka::nn::onHost::nn
      * @param activation applied after adding the bias on every layer.
      * @param output ``[batch, out_last]`` destination.
      *
-     * The work is enqueued on @p queue and may complete asynchronously. The caller owns the
-     * lifetime of @p input, every wrapped view in @p weights / @p biases and @p output: they must
-     * stay alive and valid until the enqueued work has completed. Internal scratch buffers are
-     * kept alive with ``keepAlive(queue)``.
+     * The work is enqueued on @p queue and may complete asynchronously. Every intermediate
+     * activation is allocated on ``queue.getDevice()`` and consumed by the next queued GEMM or
+     * elementwise kernel: there is no host copy and no host synchronization between layers, so a
+     * device-resident MLP tail stays on the accelerator for the whole forward pass. The caller
+     * owns the lifetime of @p input, every wrapped view in @p weights / @p biases and @p output:
+     * they must stay alive and valid until the enqueued work has completed. Internal scratch
+     * buffers are kept alive with ``keepAlive(queue)``.
      */
     template<typename T_Type, typename T_WeightView, typename T_BiasView>
     void mlpForward(
@@ -189,26 +192,25 @@ namespace alpaka::nn::onHost::nn
             auto const& weightExtents = weights[layer].view.getExtents();
             auto const& biasExtents = biases[layer].view.getExtents();
             if(static_cast<std::size_t>(weightExtents[0]) != expectedInput)
-                throw std::invalid_argument{"mlpForward: layer " + std::to_string(layer) + " weight expects in="
-                                            + std::to_string(weightExtents[0]) + " but previous out="
-                                            + std::to_string(expectedInput) + "."};
+                throw std::invalid_argument{
+                    "mlpForward: layer " + std::to_string(layer) + " weight expects in="
+                    + std::to_string(weightExtents[0]) + " but previous out=" + std::to_string(expectedInput) + "."};
             if(static_cast<std::size_t>(biasExtents[0]) != static_cast<std::size_t>(weightExtents[1]))
-                throw std::invalid_argument{"mlpForward: layer " + std::to_string(layer)
-                                            + " bias extent does not match the weight out extent."};
+                throw std::invalid_argument{
+                    "mlpForward: layer " + std::to_string(layer)
+                    + " bias extent does not match the weight out extent."};
             expectedInput = static_cast<std::size_t>(weightExtents[1]);
         }
         if(static_cast<std::size_t>(output.getExtents()[0]) != batch
            || static_cast<std::size_t>(output.getExtents()[1]) != expectedInput)
             throw std::invalid_argument{"mlpForward: output extent does not match batch x last-out."};
 
-        using Buffer = decltype(alpaka::onHost::alloc<T_Type>(
-            queue.getDevice(),
-            alpaka::Vec{batchExtent, inputExtent}));
+        using Buffer
+            = decltype(alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{batchExtent, inputExtent}));
         std::vector<Buffer> scratch;
         scratch.reserve(2u * weights.size() + 1u);
 
-        scratch.push_back(
-            alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{batchExtent, inputExtent}));
+        scratch.push_back(alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{batchExtent, inputExtent}));
         std::size_t current = 0u;
         alpaka::nn::onHost::ops::copy(queue, exec, input, scratch[current]);
 
@@ -217,8 +219,7 @@ namespace alpaka::nn::onHost::nn
             auto const outExtent = weights[layer].view.getExtents()[1];
             auto const last = layer + 1u == weights.size();
 
-            scratch.push_back(
-                alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{batchExtent, outExtent}));
+            scratch.push_back(alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{batchExtent, outExtent}));
             auto const pre = scratch.size() - 1u;
             alpaka::nn::onHost::gemm<T_Type>(queue, scratch[current], weights[layer].view, scratch[pre]);
 
