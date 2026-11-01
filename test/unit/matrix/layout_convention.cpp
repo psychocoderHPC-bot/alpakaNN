@@ -21,13 +21,8 @@ namespace
     // A 2x3 times 3x4 product with hand-computed values. The right operand is stored
     // row-major [in, out], which is the neural-bunch model-format convention.
     constexpr std::array<float, 6u> aValues{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
-    constexpr std::array<float, 12u> bValues{
-        1.0f, 0.0f, -1.0f, 2.0f,
-        0.0f, 1.0f, 2.0f, -1.0f,
-        3.0f, 1.0f, 0.0f, 1.0f};
-    constexpr std::array<float, 8u> expectedValues{
-        10.0f, 5.0f, 3.0f, 3.0f,
-        22.0f, 11.0f, 6.0f, 9.0f};
+    constexpr std::array<float, 12u> bValues{1.0f, 0.0f, -1.0f, 2.0f, 0.0f, 1.0f, 2.0f, -1.0f, 3.0f, 1.0f, 0.0f, 1.0f};
+    constexpr std::array<float, 8u> expectedValues{10.0f, 5.0f, 3.0f, 3.0f, 22.0f, 11.0f, 6.0f, 9.0f};
 
     template<typename T_Type>
     void runConvention(auto& queue, auto const& device, bool viaLinear)

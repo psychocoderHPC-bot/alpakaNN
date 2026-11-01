@@ -91,16 +91,16 @@ namespace alpaka::nn::onHost
 
         private:
             static constexpr std::array<std::uint32_t, 64> roundConstants{
-                0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u, 0x923f82a4u,
-                0xab1c5ed5u, 0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u, 0x72be5d74u, 0x80deb1feu,
-                0x9bdc06a7u, 0xc19bf174u, 0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu, 0x2de92c6fu,
-                0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau, 0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u,
-                0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u, 0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu,
-                0x53380d13u, 0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u, 0xa2bfe8a1u, 0xa81a664bu,
-                0xc24b8b70u, 0xc76c51a3u, 0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u, 0x19a4c116u,
-                0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
-                0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u,
-                0xc67178f2u};
+                0x428a'2f98u, 0x7137'4491u, 0xb5c0'fbcfu, 0xe9b5'dba5u, 0x3956'c25bu, 0x59f1'11f1u, 0x923f'82a4u,
+                0xab1c'5ed5u, 0xd807'aa98u, 0x1283'5b01u, 0x2431'85beu, 0x550c'7dc3u, 0x72be'5d74u, 0x80de'b1feu,
+                0x9bdc'06a7u, 0xc19b'f174u, 0xe49b'69c1u, 0xefbe'4786u, 0x0fc1'9dc6u, 0x240c'a1ccu, 0x2de9'2c6fu,
+                0x4a74'84aau, 0x5cb0'a9dcu, 0x76f9'88dau, 0x983e'5152u, 0xa831'c66du, 0xb003'27c8u, 0xbf59'7fc7u,
+                0xc6e0'0bf3u, 0xd5a7'9147u, 0x06ca'6351u, 0x1429'2967u, 0x27b7'0a85u, 0x2e1b'2138u, 0x4d2c'6dfcu,
+                0x5338'0d13u, 0x650a'7354u, 0x766a'0abbu, 0x81c2'c92eu, 0x9272'2c85u, 0xa2bf'e8a1u, 0xa81a'664bu,
+                0xc24b'8b70u, 0xc76c'51a3u, 0xd192'e819u, 0xd699'0624u, 0xf40e'3585u, 0x106a'a070u, 0x19a4'c116u,
+                0x1e37'6c08u, 0x2748'774cu, 0x34b0'bcb5u, 0x391c'0cb3u, 0x4ed8'aa4au, 0x5b9c'ca4fu, 0x682e'6ff3u,
+                0x748f'82eeu, 0x78a5'636fu, 0x84c8'7814u, 0x8cc7'0208u, 0x90be'fffau, 0xa450'6cebu, 0xbef9'a3f7u,
+                0xc671'78f2u};
 
             std::array<std::uint32_t, 8> state{};
             std::array<std::uint8_t, 64> buffer{};
@@ -114,15 +114,15 @@ namespace alpaka::nn::onHost
 
             void reset()
             {
-                state = {
-                    0x6a09e667u,
-                    0xbb67ae85u,
-                    0x3c6ef372u,
-                    0xa54ff53au,
-                    0x510e527fu,
-                    0x9b05688cu,
-                    0x1f83d9abu,
-                    0x5be0cd19u};
+                state
+                    = {0x6a09'e667u,
+                       0xbb67'ae85u,
+                       0x3c6e'f372u,
+                       0xa54f'f53au,
+                       0x510e'527fu,
+                       0x9b05'688cu,
+                       0x1f83'd9abu,
+                       0x5be0'cd19u};
                 buffer.fill(0u);
                 totalBytes = 0u;
                 bufferLength = 0u;
@@ -140,10 +140,10 @@ namespace alpaka::nn::onHost
                 }
                 for(std::size_t i = 16u; i < 64u; ++i)
                 {
-                    auto const s0 = rotateRight(words[i - 15u], 7u) ^ rotateRight(words[i - 15u], 18u)
-                                    ^ (words[i - 15u] >> 3u);
-                    auto const s1 = rotateRight(words[i - 2u], 17u) ^ rotateRight(words[i - 2u], 19u)
-                                    ^ (words[i - 2u] >> 10u);
+                    auto const s0
+                        = rotateRight(words[i - 15u], 7u) ^ rotateRight(words[i - 15u], 18u) ^ (words[i - 15u] >> 3u);
+                    auto const s1
+                        = rotateRight(words[i - 2u], 17u) ^ rotateRight(words[i - 2u], 19u) ^ (words[i - 2u] >> 10u);
                     words[i] = words[i - 16u] + s0 + words[i - 7u] + s1;
                 }
 
@@ -302,8 +302,8 @@ namespace alpaka::nn::onHost
             auto const actual = sha256File(path);
             if(actual != detail::toLower(expectedSha256))
                 throw std::runtime_error{
-                    "loadBinaryTensor: SHA-256 mismatch for '" + path + "': expected " + expectedSha256
-                    + ", got " + actual + "."};
+                    "loadBinaryTensor: SHA-256 mismatch for '" + path + "': expected " + expectedSha256 + ", got "
+                    + actual + "."};
         }
 
         // Only after every bound has been validated do we touch the filesystem payload and allocate.
@@ -312,12 +312,9 @@ namespace alpaka::nn::onHost
         if(!file)
             throw std::runtime_error{"loadBinaryTensor: cannot open '" + path + "'."};
         file.seekg(static_cast<std::streamoff>(spec.offsetBytes));
-        file.read(
-            reinterpret_cast<char*>(alpaka::onHost::data(host)),
-            static_cast<std::streamsize>(byteCount));
+        file.read(reinterpret_cast<char*>(alpaka::onHost::data(host)), static_cast<std::streamsize>(byteCount));
         if(!file)
-            throw std::runtime_error{
-                "loadBinaryTensor: short read for tensor '" + spec.name + "' in '" + path + "'."};
+            throw std::runtime_error{"loadBinaryTensor: short read for tensor '" + spec.name + "' in '" + path + "'."};
 
         auto deviceBuffer = alpaka::onHost::alloc<T_Type>(queue.getDevice(), alpaka::Vec{spec.count});
         alpaka::onHost::memcpy(queue, deviceBuffer, host);

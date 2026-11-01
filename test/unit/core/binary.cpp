@@ -95,11 +95,7 @@ namespace
         TempFile file{"roundtrip"};
         file.write(fileBytes);
 
-        alpaka::nn::onHost::TensorSpec const spec{
-            .name = "t",
-            .offsetBytes = 64u,
-            .count = count,
-            .shape = {2u, 3u}};
+        alpaka::nn::onHost::TensorSpec const spec{.name = "t", .offsetBytes = 64u, .count = count, .shape = {2u, 3u}};
 
         auto const expectedSha = alpaka::nn::onHost::sha256File(file.string());
         auto deviceBuffer = alpaka::nn::onHost::loadBinaryTensor<T_Type>(queue, file.string(), spec, expectedSha);

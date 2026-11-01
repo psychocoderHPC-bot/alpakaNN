@@ -33,8 +33,7 @@ namespace
         case alpaka::nn::onHost::nn::Activation::silu:
             return value / (T_Type{1} + std::exp(-value));
         case alpaka::nn::onHost::nn::Activation::gelu:
-            return T_Type{0.5} * value
-                   * (T_Type{1} + std::erf(value * static_cast<T_Type>(0.70710678118654752440)));
+            return T_Type{0.5} * value * (T_Type{1} + std::erf(value * static_cast<T_Type>(0.70710678118654752440)));
         }
         return value;
     }
@@ -150,15 +149,8 @@ namespace
         std::array<Bias, 3u> biases{Bias{dB0}, Bias{dB1}, Bias{dB2}};
 
         using Activation = alpaka::nn::onHost::nn::Activation;
-        alpaka::nn::onHost::nn::mlpForward<T_Type>(
-            queue,
-            exec,
-            devInput,
-            weights,
-            biases,
-            Activation::silu,
-            Activation::none,
-            devOutput);
+        alpaka::nn::onHost::nn::mlpForward<
+            T_Type>(queue, exec, devInput, weights, biases, Activation::silu, Activation::none, devOutput);
 
         alpaka::onHost::memcpy(queue, hostOutput, devOutput);
         alpaka::onHost::wait(queue);
